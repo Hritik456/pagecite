@@ -7,7 +7,7 @@ After each phase, fill one row. The token and cost numbers come from `/cost` in 
 | P1 | 2026-11-24 | 1 | | | Spec gaps settled before coding: SHA-256 via native S3 checksum (not user metadata); `tenants.api_key_hash` added to V1; BIGINT ids; DB tests on a real MySQL test DB with the Flyway schema (no SQLite), MinIO only in `-m integration` | | pytest -q ✅ (62), pytest -m integration ✅ (5), HTTP replay of the UI flow ✅; browser check by hand: pending |
 | P2 | 2026-11-24 | 1 | | | Before coding: embeddings stored in MySQL (V2) so reindex is identical; `document_pages` table for parse output; integration in-process + a `smoke_ingest.py` Done-when run on the real stack; generated, committed samples. On plan review: visibility_timeout 7200 s → 1800 s plus time limits and OCR caps; `reindex --all` so FLUSHDB can't lose other tenants; ADR note on why `processed_jobs` is inserted last | | pytest -q ✅ (116), pytest -m integration ✅ (13), smoke_ingest ✅ 13/13 (5/5 INDEXED incl. OCR, phrases found, MySQL = Redis), --reindex-check ✅ 17/17 (identical fingerprint, 3 tenants); repo public: pending (your step) |
 | P3 | | | | | | | |
-| P4 | | | | | | | |
+| P4 | 2026-11-24 | 1 | | | Before coding: FT.HYBRID via raw command + tested parser (not the experimental helper); a synthetic FIAS circulars corpus (fictional org, "Synthetic sample" headers) whose near-twin IDs show hybrid > vector; citations event = only the cited blocks. On plan review: release the DB connection before the SSE stream (+ tests), explicit OpenAI timeouts, a prompt-injection guard + injected page and question. questions.json reviewed against the PDF (added "mandatory", "16:00") | | pytest -q ✅ (167), pytest -m integration ✅ (29), smoke_ask ✅ 31/31 (5 cited answers on the right pages, off-topic → exact abstain, injection not followed, token lines per call) |
 | P5 | | | | | | | |
 | P6 | | | | | | | |
 
@@ -39,6 +39,20 @@ After each phase, fill one row. The token and cost numbers come from `/cost` in 
 - Plan review: visibility_timeout 7200 s → 1800 s + task time limits + OCR caps (a killed worker would stall a doc for 2 h).
 - Plan review: FLUSHDB + single-tenant reindex would wipe other tenants' index → added reindex --all.
 - Tests caught: relay process didn't register tasks (NotRegistered in prod); redis-py 8 RESP3 reply shape; lock-order deadlock (batch row now always locked first).
+
+### P4
+- Model: Opus for planning and implementation (single session); the app uses gpt-5.4-nano (decompose, rerank) and gpt-5.4-mini (answer).
+- Probes before coding: `FT.HYBRID` (since Redis 8.4.4) works with `@tenant` inside both SEARCH and VSIM `FILTER` (another tenant → 0 rows); `LOAD @__key` gives chunk ids; `YIELD_SCORE_AS` is accepted on SEARCH and COMBINE, but not on VSIM before `FILTER`.
+- RediSearch ANDs bare terms, so a natural-language question in the text branch would almost never match. It is tokenised, the terms OR'd, and identifiers added as exact phrases.
+- The OpenAI SDK (3.58) no longer ships `httpx`; timeouts use `openai.Timeout`. The gpt-5.4 models reject `reasoning_effort="minimal"` (only none/low/medium/high), and their default is no reasoning tokens.
+- A UI bug caught in writing: a global regex with `.test()` keeps `lastIndex`, which would skip every other `[n]` chip.
+- Real run: first token about 3.5–4.7 s. Decompose costs about 1–1.7 s; rerank is the largest token cost (about 4k prompt tokens for 20 passages × 200 tokens). Both are worth measuring in P5 (`hybrid` vs `hybrid_rerank`, ± decompose).
+- The off-topic question still pays for rerank + answer, because the tenant has documents and the model is the one that abstains. The zero-candidate path (no LLM call) applies only to tenants with nothing indexed.
+- Interview point: the injected "SYSTEM NOTE TO AI ASSISTANTS … 50% bonus" page was retrieved and given to the model, and the answer still gave the real hours, cited. The defence is fencing + an untrusted-data rule + ids-only rerank output + citations checked against block numbers.
+- Interview point: a streaming answer holds 0 pooled DB connections, proven by a test that is mid-stream in 18 requests at once against a 15-connection pool.
+- Plan review: DB connection was held during LLM streaming → released before first token (pool exhaustion); added timeouts, no retry on streams.
+- Plan review: added prompt-injection guard + an injected test page; verified the answer ignores it.
+- Eval review: q5/q7 checked only half the question → added "mandatory" and "16:00".
 ## Totals (fill at the end, for README and interviews)
 
 - Total sessions:

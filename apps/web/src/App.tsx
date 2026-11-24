@@ -13,6 +13,7 @@ import {
   type StageName,
   type StageView,
 } from "./api";
+import Ask from "./Ask";
 import { sha256Hex } from "./sha256";
 
 const KEY_STORAGE = "pagecite.tenantKey";
@@ -29,6 +30,7 @@ export default function App() {
   const [batch, setBatch] = useState<BatchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<"upload" | "ask">("upload");
 
   const saveKey = (value: string) => {
     setTenantKey(value);
@@ -108,14 +110,13 @@ export default function App() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-8">
-      <header>
-        <h1 className="text-2xl font-semibold">PageCite</h1>
-        <p className="text-sm text-slate-600">
-          Upload PDF or DOCX files. They go straight to storage, are verified, then parsed, chunked, embedded and indexed.
-        </p>
-      </header>
-
-      <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <header className="space-y-3">
+        <div>
+          <h1 className="text-2xl font-semibold">PageCite</h1>
+          <p className="text-sm text-slate-600">
+            Upload PDF or DOCX files, then ask questions. Every answer cites the document and page it comes from.
+          </p>
+        </div>
         <label className="block">
           <span className="text-sm font-medium">Tenant key (X-Tenant-Key)</span>
           <input
@@ -126,7 +127,28 @@ export default function App() {
             className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm"
           />
         </label>
+        <nav className="flex gap-1 border-b border-slate-200">
+          {(["upload", "ask"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                tab === t ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {t === "upload" ? "Upload" : "Ask"}
+            </button>
+          ))}
+        </nav>
+      </header>
 
+      {/* Both panels stay mounted (hidden, not unmounted) so switching tabs keeps their state. */}
+      <div className={tab === "ask" ? "" : "hidden"}>
+        <Ask tenantKey={tenantKey} />
+      </div>
+
+      <div className={tab === "upload" ? "space-y-6" : "hidden"}>
+      <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <label className="block">
           <span className="text-sm font-medium">Files</span>
           <input
@@ -200,6 +222,7 @@ export default function App() {
           </table>
         </section>
       )}
+      </div>
     </main>
   );
 }

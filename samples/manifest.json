@@ -28,5 +28,11 @@
     "phrase": "granite lantern notice",
     "page": 1,
     "scanned": true
+  },
+  {
+    "file": "06-circulars.pdf",
+    "phrase": "amber quill register",
+    "page": 3,
+    "scanned": false
   }
 ]

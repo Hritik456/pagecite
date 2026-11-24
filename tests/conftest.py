@@ -91,8 +91,8 @@ def test_settings(test_env: TestEnv, **overrides) -> Settings:
 test_settings.__test__ = False  # not a test
 
 
-def make_test_app(test_env: TestEnv, storage: Storage, **overrides) -> Flask:
-    app = create_app(settings=test_settings(test_env, **overrides), storage=storage)
+def make_test_app(test_env: TestEnv, storage: Storage, retrieval=None, **overrides) -> Flask:
+    app = create_app(settings=test_settings(test_env, **overrides), storage=storage, retrieval=retrieval)
     app.config["TESTING"] = True
     return app
 

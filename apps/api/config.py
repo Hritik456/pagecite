@@ -45,3 +45,20 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 50
     ocr_page_timeout_s: int = 60
     ocr_budget_s: int = 900
+
+    # Retrieval + answers (P4). The chat model writes the answer; the fast model decomposes and reranks.
+    openai_chat_model: str = "gpt-5.4-mini"
+    openai_fast_model: str = "gpt-5.4-nano"
+    chat_reasoning_effort: str | None = None  # sent only when set (e.g. "low")
+    fast_reasoning_effort: str | None = None
+    retrieval_strategy: str = "hybrid_rerank"  # vector_only | hybrid | hybrid_rerank
+    retrieval_decompose: bool = True
+    retrieval_k: int = 20  # candidates per sub-query
+    rerank_candidates: int = 20
+    rerank_passage_tokens: int = 200
+    context_blocks: int = 6
+    answer_max_tokens: int = 900
+    # Upstream timeouts: a hung OpenAI call must not hold a gunicorn thread.
+    answer_timeout_s: float = 60.0
+    json_timeout_s: float = 20.0
+    embed_timeout_s: float = 20.0

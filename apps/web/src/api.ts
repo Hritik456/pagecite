@@ -73,6 +73,25 @@ export const completeDocument = (key: string, documentId: number) =>
 
 export const getBatch = (key: string, batchId: number) => request<BatchResponse>(`/batches/${batchId}`, key);
 
+export type Citation = { n: number; document_id: number; title: string; page: number; page_to: number };
+
+/** POST /ask as a stream. Throws ApiError for envelope errors (before streaming starts). */
+export async function askStream(key: string, question: string): Promise<Response> {
+  const res = await fetch("/api/ask", {
+    method: "POST",
+    headers: { "X-Tenant-Key": key, "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ question, stream: true }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null))?.error;
+    throw new ApiError(res.status, err?.code ?? `HTTP_${res.status}`, err?.message ?? res.statusText, err?.request_id);
+  }
+  return res;
+}
+
+export const documentUrl = (key: string, documentId: number) =>
+  request<{ url: string; expiresIn: number }>(`/documents/${documentId}/url`, key);
+
 /** PUT the file straight to S3/MinIO with the signed headers. */
 export async function putToStorage(upload: Upload, file: File): Promise<void> {
   const res = await fetch(upload.presignedUrl, { method: "PUT", body: file, headers: upload.headers });

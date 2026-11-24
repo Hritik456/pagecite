@@ -314,3 +314,20 @@ def run_concurrently(app, key: str, document_ids: list[int]) -> list[int]:
     for t in threads:
         t.join(timeout=30)
     return statuses
+
+
+# --- GET /documents/:id/url (P4: citation chips) ------------------------------------------------
+
+
+def test_document_url_is_tenant_scoped(client, make_tenant, fake_storage):
+    _, key_a = make_tenant("tenant-a")
+    _, key_b = make_tenant("tenant-b")
+    up = create_batch(client, key_a, [file_spec("Policy v2.pdf", pdf_bytes())]).get_json()["uploads"][0]
+
+    own = client.get(f"/documents/{up['documentId']}/url", headers=auth(key_a))
+    assert own.status_code == 200
+    body = own.get_json()
+    assert body["url"].startswith("https://fake-s3.test/tenant/") and "response-content-type=application/pdf" in body["url"]
+    assert body["expiresIn"] == 900
+
+    assert_envelope(client.get(f"/documents/{up['documentId']}/url", headers=auth(key_b)), 404, "NOT_FOUND")

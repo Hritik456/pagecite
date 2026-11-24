@@ -9,7 +9,7 @@ from ..errors import AppError
 from ..keys import tenant_prefix
 from ..models import Batch, BatchStatus, Document, DocumentStage, DocumentStatus, OutboxEvent
 from ..quotas import sha256_hex_to_b64
-from ..state import current_tenant, get_session, get_storage
+from ..state import app_state, current_tenant, get_session, get_storage
 from .views import document_view, stage_view
 
 bp = Blueprint("documents", __name__)
@@ -41,6 +41,14 @@ def get_document(document_id: int):
         .order_by(DocumentStage.version, DocumentStage.id)
     ).all()
     return jsonify({"document": document_view(doc), "stages": [stage_view(s) for s in stages]})
+
+
+@bp.get("/documents/<int:document_id>/url")
+def document_url(document_id: int):
+    """Short-lived presigned GET for the stored file (P4: citation chips open the cited page)."""
+    doc = _load_document(document_id)  # tenant-scoped: another tenant's id is a 404
+    url = get_storage().presign_get(doc.object_key, doc.filename, doc.mime)
+    return jsonify({"url": url, "expiresIn": app_state().settings.presign_expires_seconds})
 
 
 @bp.post("/documents/<int:document_id>/complete")

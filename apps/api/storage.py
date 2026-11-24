@@ -21,6 +21,7 @@ class Storage(Protocol):
     def presign_put(self, key: str, content_type: str, checksum_sha256_b64: str) -> str: ...
     def head(self, key: str) -> ObjectInfo | None: ...
     def get(self, key: str) -> bytes: ...
+    def presign_get(self, key: str, filename: str, content_type: str) -> str: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -81,6 +82,21 @@ class S3Storage:
         except BotoCoreError as exc:
             raise _unavailable(exc) from exc
         return ObjectInfo(size=resp["ContentLength"], checksum_sha256_b64=resp.get("ChecksumSHA256"))
+
+    def presign_get(self, key: str, filename: str, content_type: str) -> str:
+        """A short-lived GET URL for the browser (citation chips open the cited page)."""
+        safe_name = "".join(c if c.isalnum() or c in "._- " else "_" for c in filename)[:120] or "document"
+        return self._presigner.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "ResponseContentType": content_type,
+                "ResponseContentDisposition": f'inline; filename="{safe_name}"',
+            },
+            ExpiresIn=self._expires,
+            HttpMethod="GET",
+        )
 
     def get(self, key: str) -> bytes:
         """Whole object (used by the parse worker; file sizes are capped by tenant quotas)."""

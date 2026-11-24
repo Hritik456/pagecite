@@ -21,4 +21,6 @@ RUN useradd --system --no-create-home app
 USER app
 
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "30", "apps.api:create_app()"]
+# gthread: a streaming /ask holds one thread, not a whole worker process (2 workers x 8 threads).
+# --timeout is the worker heartbeat; each upstream call has its own timeout (answer 60 s, JSON 20 s).
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "apps.api:create_app()"]
