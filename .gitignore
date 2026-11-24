@@ -1,0 +1,42 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node ---
+node_modules/
+apps/web/dist/
+.vite/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# --- Env ---
+.env
+.env.*
+!.env.example
+
+# --- Local data volumes ---
+data/
+.data/
+volumes/
+mysql-data/
+redis-data/
+minio-data/
+caddy_data/
+caddy_config/
+
+# --- OS / editor / tools ---
+.DS_Store
+Thumbs.db
+.idea/
+.claude/settings.local.json
