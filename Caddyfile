@@ -1,0 +1,15 @@
+:80 {
+	encode gzip
+
+	# API: strip the /api prefix so routes match docs/specs.md §6 (/batches, /documents/...).
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Web console: built Vite app (apps/web/dist).
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}

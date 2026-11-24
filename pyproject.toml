@@ -1,0 +1,36 @@
+[project]
+name = "pagecite"
+version = "0.1.0"
+description = "Async RAG platform with cited answers (API + workers)."
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "flask>=3.1",
+    "sqlalchemy>=2.0.36",
+    "pymysql>=1.1",
+    "cryptography>=43",        # MySQL 8 caching_sha2_password auth for PyMySQL
+    "boto3>=1.38",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "gunicorn>=23",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "requests>=2.32",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["apps"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `pytest -q` runs unit + DB tests; `pytest -m integration` (later -m wins) runs the MinIO tests.
+addopts = '-m "not integration"'
+markers = [
+    "integration: needs the compose MinIO + MySQL (docker compose up -d mysql flyway-test minio minio-init)",
+]

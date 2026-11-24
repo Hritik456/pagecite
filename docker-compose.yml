@@ -1,0 +1,134 @@
+name: pagecite
+
+# Values come from .env (see .env.example; local-dev values are in README "Run locally").
+
+x-flyway: &flyway
+  image: flyway/flyway:11
+  volumes:
+    - ./db/migrations:/flyway/migrations:ro
+  depends_on:
+    mysql:
+      condition: service_healthy
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP ping: fails while the entrypoint's init server (socket only) runs, so "healthy" means fully started.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  redis:
+    image: redis:8.4
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  flyway:
+    <<: *flyway
+    # Exec form: Compose's string splitting would cut the JDBC URL at "&".
+    command:
+      - -url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?allowPublicKeyRetrieval=true&useSSL=false
+      - -user=${MYSQL_USER}
+      - -password=${MYSQL_PASSWORD}
+      - -locations=filesystem:/flyway/migrations
+      - -connectRetries=30
+      - migrate
+
+  flyway-test:
+    <<: *flyway
+    command:
+      - -url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE}_test?allowPublicKeyRetrieval=true&useSSL=false
+      - -user=${MYSQL_USER}
+      - -password=${MYSQL_PASSWORD}
+      - -locations=filesystem:/flyway/migrations
+      - -connectRetries=30
+      - migrate
+
+  minio:
+    # MinIO no longer publishes community images; Chainguard builds MinIO from source. Pinned by digest.
+    image: cgr.dev/chainguard/minio@sha256:f2e56aceb4d38ad9b05c901270946e2353b19f86ba4396f25cf75b15b455b38c
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # The browser PUTs straight to MinIO, so the web origins need CORS.
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:${CADDY_HTTP_PORT:-8000},http://localhost:5174
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # The image has bash but no curl/grep: raw HTTP over /dev/tcp, then check the status line.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /minio/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r line <&3 && [[ $$line == *' 200 '* ]]"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  minio-init:
+    # The mc image has no shell: one command creates both buckets (main + pytest integration).
+    image: cgr.dev/chainguard/minio-client@sha256:69e686e3bf20ed53d95c3eeab497f4ea89eddb3c3540000652c11b7a6fe8edb3
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+    command: ["mb", "--ignore-existing", "local/${S3_BUCKET}", "local/${S3_TEST_BUCKET}"]
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: .env
+    environment:
+      # In-network hosts; .env holds the host-side (localhost) values used by pytest and the CLI.
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      S3_ENDPOINT_URL: http://minio:9000
+      # Presigned URLs must carry the host the browser uses.
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL}
+    expose:
+      - "8000"
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "${CADDY_HTTP_PORT:-8000}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./apps/web/dist:/srv/web:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+  caddy-data:
+  caddy-config:
