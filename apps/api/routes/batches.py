@@ -1,10 +1,10 @@
-"""POST /batches (quota checks + presigned PUT URLs) and GET /batches/:id."""
+"""POST /batches (quota checks + presigned PUT URLs), GET /batches/:id, POST /batches/:id/cancel."""
 
 import logging
 import uuid
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..errors import AppError
 from ..keys import object_key
@@ -93,3 +93,43 @@ def get_batch(batch_id: int):
             "documents": [{**document_view(d), "stages": by_doc.get(d.id, [])} for d in docs],
         }
     )
+
+
+@bp.post("/batches/<int:batch_id>/cancel")
+def cancel_batch(batch_id: int):
+    """Cancel what is still in flight (P3).
+
+    Not-yet-uploaded documents become CANCELLED at once; every other unfinished document becomes
+    CANCEL_REQUESTED: its next task sees that at start, marks it CANCELLED and enqueues nothing.
+    Finished documents (INDEXED/FAILED) keep their state. Idempotent.
+    """
+    from apps.worker.stages import IN_FLIGHT, lock_batch, recompute_batch
+
+    tenant = current_tenant()
+    session = get_session()
+    if session.scalar(select(Batch.id).where(Batch.id == batch_id, Batch.tenant_id == tenant.id)) is None:
+        raise AppError("NOT_FOUND", "batch not found", 404)
+    session.rollback()
+
+    with session.begin():
+        lock_batch(session, batch_id)
+        cancelled = session.execute(
+            update(Document)
+            .where(Document.batch_id == batch_id, Document.status == DocumentStatus.CREATED)
+            .values(status=DocumentStatus.CANCELLED)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        requested = session.execute(
+            update(Document)
+            .where(
+                Document.batch_id == batch_id,
+                Document.status.in_([s.value for s in IN_FLIGHT if s is not DocumentStatus.CREATED]),
+            )
+            .values(status=DocumentStatus.CANCEL_REQUESTED)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        recompute_batch(session, batch_id)
+
+    log.info("batch_cancel tenant_id=%s batch_id=%s cancelled=%s requested=%s", tenant.id, batch_id, cancelled, requested)
+    batch = session.scalar(select(Batch).where(Batch.id == batch_id).execution_options(populate_existing=True))
+    return jsonify({"batch": batch_view(batch), "cancelled": cancelled, "cancelRequested": requested}), 202

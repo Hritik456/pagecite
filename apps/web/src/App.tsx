@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import {
   ApiError,
+  cancelBatch,
   completeDocument,
   createBatch,
   getBatch,
   mimeFor,
   putToStorage,
+  replayDocument,
+  REPLAYABLE,
   TERMINAL_BATCH_STATUSES,
   TERMINAL_DOCUMENT_STATUSES,
   type BatchResponse,
@@ -14,6 +17,7 @@ import {
   type StageView,
 } from "./api";
 import Ask from "./Ask";
+import DeadLetters from "./DeadLetters";
 import { sha256Hex } from "./sha256";
 
 const KEY_STORAGE = "pagecite.tenantKey";
@@ -30,7 +34,7 @@ export default function App() {
   const [batch, setBatch] = useState<BatchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"upload" | "ask">("upload");
+  const [tab, setTab] = useState<"upload" | "ask" | "dlq">("upload");
 
   const saveKey = (value: string) => {
     setTenantKey(value);
@@ -75,6 +79,26 @@ export default function App() {
       setRows([]);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function cancel() {
+    if (!batch) return;
+    try {
+      await cancelBatch(tenantKey, batch.batch.id);
+      setBatch(await getBatch(tenantKey, batch.batch.id));
+    } catch (e) {
+      setError(describe(e));
+    }
+  }
+
+  async function replay(documentId: number) {
+    if (!batch) return;
+    try {
+      await replayDocument(tenantKey, documentId);
+      setBatch(await getBatch(tenantKey, batch.batch.id)); // the batch re-opens, so live polling resumes
+    } catch (e) {
+      setError(describe(e));
     }
   }
 
@@ -128,7 +152,7 @@ export default function App() {
           />
         </label>
         <nav className="flex gap-1 border-b border-slate-200">
-          {(["upload", "ask"] as const).map((t) => (
+          {(["upload", "ask", "dlq"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -136,7 +160,7 @@ export default function App() {
                 tab === t ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-700"
               }`}
             >
-              {t === "upload" ? "Upload" : "Ask"}
+              {t === "upload" ? "Upload" : t === "ask" ? "Ask" : "Dead letters"}
             </button>
           ))}
         </nav>
@@ -145,6 +169,10 @@ export default function App() {
       {/* Both panels stay mounted (hidden, not unmounted) so switching tabs keeps their state. */}
       <div className={tab === "ask" ? "" : "hidden"}>
         <Ask tenantKey={tenantKey} />
+      </div>
+
+      <div className={tab === "dlq" ? "" : "hidden"}>
+        <DeadLetters tenantKey={tenantKey} active={tab === "dlq"} />
       </div>
 
       <div className={tab === "upload" ? "space-y-6" : "hidden"}>
@@ -187,8 +215,13 @@ export default function App() {
                   Refresh
                 </button>
               ) : (
-                <span className="flex items-center gap-2 text-sm text-slate-600">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" /> live
+                <span className="flex items-center gap-3 text-sm text-slate-600">
+                  <span className="flex items-center gap-2">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" /> live
+                  </span>
+                  <button onClick={cancel} className="rounded border border-slate-300 px-2 py-0.5 text-xs hover:bg-slate-50">
+                    Cancel batch
+                  </button>
                 </span>
               ))}
           </div>
@@ -214,7 +247,20 @@ export default function App() {
                       {row.error && <div className="text-xs text-red-700">{row.error}</div>}
                     </td>
                     <td className="px-5 py-2">{doc ? <StageChips stages={doc.stages ?? []} /> : "—"}</td>
-                    <td className="px-5 py-2 font-mono text-xs">{doc?.status ?? "—"}</td>
+                    <td className="px-5 py-2">
+                      <span className="font-mono text-xs">{doc?.status ?? "—"}</span>
+                      {doc && doc.processingVersion > 1 && (
+                        <span className="ml-1 text-xs text-slate-500">v{doc.processingVersion}</span>
+                      )}
+                      {doc && REPLAYABLE.has(doc.status) && (
+                        <button
+                          onClick={() => replay(doc.id)}
+                          className="ml-2 rounded border border-slate-300 px-1.5 py-0.5 text-xs hover:bg-slate-50"
+                        >
+                          Replay
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -245,7 +291,9 @@ function StageChips({ stages }: { stages: StageView[] }) {
       {STAGES.map((name) => {
         const s = byName.get(name);
         const status = s?.status ?? "PENDING";
-        const title = s ? `${name}: ${status}${s.attempts > 1 ? ` (attempt ${s.attempts})` : ""}` : `${name}: not started`;
+        const title = s
+          ? `${name}: ${status}${s.attempts > 1 ? ` (attempt ${s.attempts})` : ""}${s.lastError ? ` - ${s.lastError}` : ""}`
+          : `${name}: not started`;
         return (
           <span key={name} title={title} className={`rounded px-1.5 py-0.5 text-xs ${STAGE_TONE[status]}`}>
             {name}

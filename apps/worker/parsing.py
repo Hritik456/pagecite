@@ -41,9 +41,10 @@ class Page:
 
 @dataclass(frozen=True)
 class OcrLimits:
-    max_pages: int = 50
+    max_pages: int = 50  # scanned pages to OCR
     page_timeout_s: int = 60
     budget_s: int = 900
+    max_document_pages: int = 500  # spec §8: checked before any text extraction
 
 
 def parse_document(
@@ -81,6 +82,12 @@ def parse_pdf(data: bytes, ocr_fn: OcrFn, limits: OcrLimits, clock: Callable[[],
         raise _classify_pdf_error(exc) from exc
 
     with pdf:
+        try:
+            n_pages = len(pdf.pages)
+        except Exception as exc:
+            raise _classify_pdf_error(exc) from exc
+        if n_pages > limits.max_document_pages:  # before extraction: a huge PDF costs nothing
+            raise PermanentError("PAGE_LIMIT", f"{n_pages} pages; the limit is {limits.max_document_pages}")
         try:
             texts = [(page.extract_text() or "").strip() for page in pdf.pages]
         except Exception as exc:

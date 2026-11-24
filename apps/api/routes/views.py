@@ -1,6 +1,6 @@
 """JSON shapes for API responses (camelCase, as in docs/specs.md §6)."""
 
-from ..models import Batch, Document, DocumentStage
+from ..models import Batch, DeadLetter, Document, DocumentStage
 
 
 def batch_view(batch: Batch) -> dict:
@@ -23,6 +23,7 @@ def document_view(doc: Document) -> dict:
         "mime": doc.mime,
         "status": doc.status,
         "processingVersion": doc.processing_version,
+        "activeVersion": doc.active_version,
     }
 
 
@@ -32,6 +33,22 @@ def stage_view(stage: DocumentStage) -> dict:
         "version": stage.version,
         "status": stage.status,
         "attempts": stage.attempts,
+        "lastError": stage.last_error[:300] if stage.last_error else None,
         "startedAt": stage.started_at.isoformat() if stage.started_at else None,
         "finishedAt": stage.finished_at.isoformat() if stage.finished_at else None,
+    }
+
+
+def dead_letter_view(dl: DeadLetter, filename: str) -> dict:
+    return {
+        "id": dl.id,
+        "documentId": dl.document_id,
+        "filename": filename,
+        "stage": dl.stage,
+        "version": dl.version,
+        "kind": dl.kind,
+        "errorCode": dl.error_code,
+        "error": dl.error[:300],
+        "createdAt": dl.created_at.isoformat() if dl.created_at else None,
+        "replayedAt": dl.replayed_at.isoformat() if dl.replayed_at else None,
     }

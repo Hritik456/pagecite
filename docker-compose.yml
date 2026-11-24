@@ -164,6 +164,9 @@ services:
   worker-parse:
     <<: *worker
     # CPU-bound (pdfplumber + Tesseract): small, separate pool so OCR never blocks other stages.
+    # Spec §8: parsing is memory-capped. An OOM kills a pool child -> immediate requeue
+    # (reject_on_worker_lost); a document that does it every time hits STAGE_ATTEMPT_LIMIT -> DLQ.
+    mem_limit: 1g
     command: ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "parse", "-c", "2", "-n", "parse@%h", "--loglevel", "INFO"]
 
   worker-chunk:

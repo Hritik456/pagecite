@@ -93,14 +93,20 @@ def _search(deps: RetrievalDeps, cfg: RetrievalConfig, tenant_id: int, query: st
 
 
 def load_candidates(sessions: sessionmaker[Session], tenant_id: int, hits: list[Hit]) -> list[Candidate]:
-    """Chunk text (MySQL is the truth) for the ranked hits, filtered by tenant again, order kept."""
+    """Chunk text (MySQL is the truth) for the ranked hits: same tenant, active version only, order kept."""
     if not hits:
         return []
     with sessions() as session:  # closed on exit: the connection goes back to the pool here
         rows = session.execute(
             select(Chunk.id, Chunk.document_id, Chunk.text, Chunk.page_from, Chunk.page_to, Document.filename)
             .join(Document, Document.id == Chunk.document_id)
-            .where(Chunk.id.in_([h.chunk_id for h in hits]), Chunk.tenant_id == tenant_id)
+            .where(
+                Chunk.id.in_([h.chunk_id for h in hits]),
+                Chunk.tenant_id == tenant_id,
+                # The version switch (docs/adr/0004): during a replay Redis can briefly hold keys of two
+                # versions; this one consistent read serves exactly the active one, never both.
+                Chunk.version == Document.active_version,
+            )
         ).all()
     by_id = {r.id: r for r in rows}
     return [
@@ -114,7 +120,7 @@ def load_candidates(sessions: sessionmaker[Session], tenant_id: int, hits: list[
             score=h.score,
         )
         for h in hits
-        if h.chunk_id in by_id  # a stale index key (chunk gone from MySQL) is skipped, never invented
+        if h.chunk_id in by_id  # a stale key (inactive version, or chunk gone) is skipped, never invented
     ]
 
 

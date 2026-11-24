@@ -1,4 +1,4 @@
-"""GET /documents/:id and POST /documents/:id/complete."""
+"""GET /documents/:id, /documents/:id/url; POST /documents/:id/complete and /documents/:id/replay."""
 
 import logging
 
@@ -7,7 +7,7 @@ from sqlalchemy import func, select, update
 
 from ..errors import AppError
 from ..keys import tenant_prefix
-from ..models import Batch, BatchStatus, Document, DocumentStage, DocumentStatus, OutboxEvent
+from ..models import Batch, BatchStatus, DeadLetter, Document, DocumentStage, DocumentStatus, OutboxEvent
 from ..quotas import sha256_hex_to_b64
 from ..state import app_state, current_tenant, get_session, get_storage
 from .views import document_view, stage_view
@@ -49,6 +49,71 @@ def document_url(document_id: int):
     doc = _load_document(document_id)  # tenant-scoped: another tenant's id is a 404
     url = get_storage().presign_get(doc.object_key, doc.filename, doc.mime)
     return jsonify({"url": url, "expiresIn": app_state().settings.presign_expires_seconds})
+
+
+REPLAYABLE = {DocumentStatus.FAILED, DocumentStatus.INDEXED, DocumentStatus.CANCELLED}
+
+
+@bp.post("/documents/<int:document_id>/replay")
+def replay_document(document_id: int):
+    """Reprocess a document as a new version (P3). History is never overwritten (CLAUDE.md).
+
+    processing_version + 1 and a fresh outbox event (the relay enqueues `parse` for the new version);
+    active_version is untouched, so the old version keeps answering /ask until the new one is
+    INDEXED (docs/adr/0004). Open DLQ rows of the document are marked replayed.
+    """
+    from apps.worker.stages import lock_batch, recompute_batch
+
+    tenant = current_tenant()
+    session = get_session()
+    batch_id = _load_document(document_id).batch_id  # 404 for another tenant's document
+    session.rollback()
+
+    with session.begin():
+        lock_batch(session, batch_id)  # same lock order as complete/stages: batch row first
+        doc = session.scalar(
+            select(Document)
+            .where(Document.id == document_id, Document.tenant_id == tenant.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if doc.status not in REPLAYABLE:
+            raise AppError(
+                "NOT_REPLAYABLE",
+                f"a document in {doc.status} cannot be replayed; wait until it is INDEXED, FAILED or CANCELLED",
+                409,
+            )
+        old_version = doc.processing_version
+        doc.processing_version = old_version + 1
+        doc.status = DocumentStatus.UPLOADED
+        session.add(
+            OutboxEvent(
+                type=OUTBOX_DOCUMENT_UPLOADED,
+                aggregate_id=doc.id,
+                payload={
+                    "document_id": doc.id,
+                    "tenant_id": tenant.id,
+                    "batch_id": batch_id,
+                    "version": doc.processing_version,
+                    "replay_of": old_version,
+                },
+            )
+        )
+        replayed = session.execute(
+            update(DeadLetter)
+            .where(DeadLetter.document_id == doc.id, DeadLetter.replayed_at.is_(None))
+            .values(replayed_at=func.now(6))
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        session.flush()
+        recompute_batch(session, batch_id)
+
+    log.info(
+        "document_replay tenant_id=%s document_id=%s version=%s->%s dead_letters=%s",
+        tenant.id, document_id, old_version, doc.processing_version, replayed,
+    )
+    doc = _load_document(document_id)
+    return jsonify({"document": document_view(doc), "replayedDeadLetters": replayed}), 202
 
 
 @bp.post("/documents/<int:document_id>/complete")

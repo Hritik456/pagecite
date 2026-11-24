@@ -36,6 +36,43 @@ class OpenAIEmbedder:
         return vectors, (resp.usage.prompt_tokens if resp.usage else 0)
 
 
+class FaultyEmbedder:
+    """Chaos/DLQ demo only (FAULT_EMBED_429_PREFIX): HTTP 429 for version 1 of matching filenames.
+
+    Selected in context.py, never by task code, and refused with APP_ENV=production (Settings).
+    Raises a genuine openai.RateLimitError (with Retry-After), so the production classification and
+    retry path runs unchanged. A replay (version >= 2) passes through, so it can succeed.
+    """
+
+    def __init__(self, inner: "Embedder", prefix: str, retry_after_s: int = 1):
+        self.inner = inner
+        self.prefix = prefix
+        self.retry_after_s = retry_after_s
+        self.model = getattr(inner, "model", "?")
+
+    def for_document(self, filename: str, version: int) -> "Embedder":
+        if version == 1 and filename.startswith(self.prefix):
+            return _RateLimited(self.model, self.retry_after_s)
+        return self.inner
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self.inner.embed(texts)
+
+
+class _RateLimited:
+    def __init__(self, model: str, retry_after_s: int):
+        self.model = model
+        self.retry_after_s = retry_after_s
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        import httpx2
+        import openai
+
+        request = httpx2.Request("POST", "https://api.openai.com/v1/embeddings")
+        response = httpx2.Response(429, headers={"retry-after": str(self.retry_after_s)}, request=request)
+        raise openai.RateLimitError("Rate limit reached (injected fault)", response=response, body=None)
+
+
 class UnconfiguredEmbedder:
     """Used when no API key is set: fails the stage with a clear code instead of a crash."""
 

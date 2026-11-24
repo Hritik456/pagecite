@@ -138,7 +138,7 @@ def main() -> int:
         mysql_chunks = conn.execute(
             text(
                 "SELECT COUNT(*) FROM chunks c JOIN documents d ON d.id = c.document_id "
-                "WHERE c.tenant_id = :t AND c.version = d.processing_version AND d.status = 'INDEXED'"
+                "WHERE c.tenant_id = :t AND c.version = d.active_version"  # the served version (docs/adr/0004)
             ),
             {"t": tenant_id},
         ).scalar()

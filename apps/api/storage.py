@@ -102,7 +102,12 @@ class S3Storage:
         """Whole object (used by the parse worker; file sizes are capped by tenant quotas)."""
         try:
             return self._client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
-        except (ClientError, BotoCoreError) as exc:
+        except ClientError as exc:
+            # A missing object will never appear on retry (permanent); anything else may be transient.
+            if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                raise AppError("OBJECT_NOT_FOUND", "the stored object does not exist", 404) from exc
+            raise _unavailable(exc) from exc
+        except BotoCoreError as exc:
             raise _unavailable(exc) from exc
 
     def delete(self, key: str) -> None:

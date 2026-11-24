@@ -16,7 +16,7 @@ from apps.api.db import make_engine
 from apps.api.search_index import IndexConfig, index_config, make_redis
 from apps.api.storage import S3Storage, Storage
 
-from .embedding import Embedder, OpenAIEmbedder, UnconfiguredEmbedder
+from .embedding import Embedder, FaultyEmbedder, OpenAIEmbedder, UnconfiguredEmbedder
 from .errors import PermanentError
 from .parsing import OcrFn, OcrLimits
 
@@ -55,15 +55,28 @@ class WorkerContext:
     @property
     def ocr_limits(self) -> OcrLimits:
         s = self.settings
-        return OcrLimits(max_pages=s.ocr_max_pages, page_timeout_s=s.ocr_page_timeout_s, budget_s=s.ocr_budget_s)
+        return OcrLimits(
+            max_pages=s.ocr_max_pages, page_timeout_s=s.ocr_page_timeout_s, budget_s=s.ocr_budget_s,
+            max_document_pages=s.max_pages,
+        )
+
+    def embedder_for(self, filename: str, version: int) -> Embedder:
+        """The embedder for one document. Plain embedder unless a fault wrapper is configured."""
+        for_document = getattr(self.embedder, "for_document", None)
+        return for_document(filename, version) if for_document else self.embedder
 
 
 def build_context(settings: Settings | None = None) -> WorkerContext:
     settings = settings or Settings()
     key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else ""
+    # max_retries=0: Celery owns retries (backoff + jitter + Retry-After, docs/adr/0003), so the SDK
+    # must not retry underneath it (that would multiply calls and hide 429s from the retry policy).
     embedder: Embedder = (
-        OpenAIEmbedder(key, settings.openai_embed_model, settings.embed_dim) if key else UnconfiguredEmbedder()
+        OpenAIEmbedder(key, settings.openai_embed_model, settings.embed_dim, max_retries=0)
+        if key else UnconfiguredEmbedder()
     )
+    if settings.fault_embed_429_prefix:  # chaos/DLQ demo only; Settings refuses this in production
+        embedder = FaultyEmbedder(embedder, settings.fault_embed_429_prefix)
     return WorkerContext(
         settings=settings,
         sessions=sessionmaker(make_engine(settings.database_url), expire_on_commit=False),

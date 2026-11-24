@@ -1,0 +1,35 @@
+# Chaos / DLQ-demo overlay (P3, docs/adr/0003). NOT for production: APP_ENV=chaos, and Settings refuses
+# fault injection when APP_ENV=production.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
+#   uv run python scripts/chaos_embed.py --runs 3
+#   uv run python scripts/smoke_dlq.py
+#   docker compose up -d          # back to the normal configuration
+#
+# Same code, smaller numbers: a `docker kill`ed worker's unacked task returns after the visibility
+# timeout, so 120 s here (1800 s in production). The same ordering is enforced by Settings:
+#   OCR budget 45 < soft limit 60 < hard limit 90 < visibility timeout 120;  retry backoff max 30 < 120.
+
+x-chaos-env: &chaos-env
+  APP_ENV: chaos
+  BROKER_VISIBILITY_TIMEOUT_S: "120"
+  STAGE_SOFT_TIME_LIMIT_S: "60"
+  STAGE_TIME_LIMIT_S: "90"
+  OCR_BUDGET_S: "45"
+  RETRY_BACKOFF_MAX_S: "30"
+  EMBED_BATCH_SIZE: "4"            # more, smaller embed batches: a wider kill window + partial-batch redo
+  FAULT_EMBED_429_PREFIX: "fail-"  # files named fail-* get HTTP 429 on embed for version 1 (DLQ demo)
+
+services:
+  api:
+    environment: *chaos-env
+  relay:
+    environment: *chaos-env
+  worker-parse:
+    environment: *chaos-env
+  worker-chunk:
+    environment: *chaos-env
+  worker-embed:
+    environment: *chaos-env
+  worker-index:
+    environment: *chaos-env

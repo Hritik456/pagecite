@@ -14,6 +14,7 @@ from .errors import register_error_handlers
 from .request_log import configure_logging, register_request_hooks
 from .routes.ask import bp as ask_bp
 from .routes.batches import bp as batches_bp
+from .routes.dead_letters import bp as dead_letters_bp
 from .routes.documents import bp as documents_bp
 from .state import EXTENSION_KEY, AppState, close_session
 from .storage import S3Storage, Storage
@@ -52,5 +53,6 @@ def create_app(
     app.register_blueprint(batches_bp)
     app.register_blueprint(documents_bp)
     app.register_blueprint(ask_bp)
+    app.register_blueprint(dead_letters_bp)
     register_cli(app)
     return app

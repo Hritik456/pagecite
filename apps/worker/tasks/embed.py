@@ -25,6 +25,7 @@ SET_EMBEDDING = (
 
 def handle(ctx: WorkerContext, session: Session, doc: DocRef) -> dict:
     s = ctx.settings
+    embedder = ctx.embedder_for(doc.filename, doc.version)
     embedded = batches = 0
     while True:
         with session.begin():
@@ -36,14 +37,14 @@ def handle(ctx: WorkerContext, session: Session, doc: DocRef) -> dict:
             ).all()
         if not rows:
             break
-        vectors = ctx.embedder.embed([r.text for r in rows])
+        vectors = embedder.embed([r.text for r in rows])
         if len(vectors) != len(rows) or any(len(v) != s.embed_dim for v in vectors):
             raise PermanentError("EMBEDDING_SHAPE", f"expected {len(rows)} vectors of dim {s.embed_dim}")
         with session.begin():
             session.execute(
                 SET_EMBEDDING,
                 [
-                    {"chunk_id": r.id, "vector": to_float32_bytes(v), "model": ctx.embedder.model}
+                    {"chunk_id": r.id, "vector": to_float32_bytes(v), "model": embedder.model}
                     for r, v in zip(rows, vectors)
                 ],
             )
@@ -56,5 +57,5 @@ def handle(ctx: WorkerContext, session: Session, doc: DocRef) -> dict:
 
 
 @app.task(name="pagecite.embed", **STAGE_TASK_OPTIONS)
-def embed(document_id: int, version: int) -> None:
-    run_stage(get_context(), StageName.EMBED, document_id, version, handle)
+def embed(self, document_id: int, version: int) -> None:
+    run_stage(get_context(), StageName.EMBED, document_id, version, handle, task=self)

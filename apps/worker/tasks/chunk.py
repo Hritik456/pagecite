@@ -63,5 +63,5 @@ def handle(ctx: WorkerContext, session: Session, doc: DocRef) -> dict:
 
 
 @app.task(name="pagecite.chunk", **STAGE_TASK_OPTIONS)
-def chunk(document_id: int, version: int) -> None:
-    run_stage(get_context(), StageName.CHUNK, document_id, version, handle)
+def chunk(self, document_id: int, version: int) -> None:
+    run_stage(get_context(), StageName.CHUNK, document_id, version, handle, task=self)

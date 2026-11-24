@@ -21,6 +21,7 @@ export type StageView = {
   version: number;
   status: "PENDING" | "RUNNING" | "RETRY_WAIT" | "SUCCEEDED" | "FAILED" | "CANCELLED";
   attempts: number;
+  lastError?: string | null;
 };
 
 export type DocumentView = {
@@ -31,6 +32,7 @@ export type DocumentView = {
   mime: string;
   status: string;
   processingVersion: number;
+  activeVersion?: number | null;
   /** Present in GET /batches/:id: per-stage progress for the current version. */
   stages?: StageView[];
 };
@@ -72,6 +74,31 @@ export const completeDocument = (key: string, documentId: number) =>
   request<{ document: DocumentView }>(`/documents/${documentId}/complete`, key, { method: "POST" });
 
 export const getBatch = (key: string, batchId: number) => request<BatchResponse>(`/batches/${batchId}`, key);
+
+export type DeadLetter = {
+  id: number;
+  documentId: number;
+  filename: string;
+  stage: string;
+  version: number;
+  kind: "exhausted" | "permanent" | "attempt_limit";
+  errorCode: string | null;
+  error: string;
+  createdAt: string;
+  replayedAt: string | null;
+};
+
+export const listDeadLetters = (key: string) => request<{ deadLetters: DeadLetter[] }>("/dead-letters", key);
+
+export const replayDocument = (key: string, documentId: number) =>
+  request<{ document: DocumentView; replayedDeadLetters: number }>(`/documents/${documentId}/replay`, key, {
+    method: "POST",
+  });
+
+export const cancelBatch = (key: string, batchId: number) =>
+  request<{ cancelled: number; cancelRequested: number }>(`/batches/${batchId}/cancel`, key, { method: "POST" });
+
+export const REPLAYABLE = new Set(["FAILED", "INDEXED", "CANCELLED"]);
 
 export type Citation = { n: number; document_id: number; title: string; page: number; page_to: number };
 

@@ -114,7 +114,11 @@ def worker_ctx(test_env, s3_storage, redis_index, eager):
 
 def upload_samples(client, key: str, only: list[str] | None = None) -> dict[str, int]:
     names = only or [m["file"] for m in MANIFEST]
-    files = [(name, (SAMPLES / name).read_bytes()) for name in names]
+    return upload_files(client, key, [(name, (SAMPLES / name).read_bytes()) for name in names])
+
+
+def upload_files(client, key: str, files: list[tuple[str, bytes]]) -> dict[str, int]:
+    """Create a batch, PUT each file to MinIO, complete it. Returns file name -> document id."""
     resp = client.post("/batches", json={"files": [file_spec(n, d) for n, d in files]}, headers=auth(key))
     assert resp.status_code == 201, resp.get_json()
     ids = {}

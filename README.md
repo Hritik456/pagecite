@@ -2,7 +2,7 @@
 
 PageCite answers questions from piles of PDF and DOCX files (policies, circulars, manuals) and **cites the page** each answer comes from. It is built as an async RAG platform. Files are uploaded straight to S3. Staged workers then parse, chunk, embed and index them. Answers use hybrid retrieval with citations and are checked by an eval harness.
 
-> Status: **P1 (upload pipeline)**, **P2 (staged workers → Redis vector + text index)** and **P4 (hybrid retrieval with cited, streamed answers)** are done. Reliability (P3) and eval/deploy (P5) are next. The full design is in [docs/specs.md](docs/specs.md), and the decisions are in [docs/adr/](docs/adr/).
+> Status: **P1 (upload pipeline)**, **P2 (staged workers → Redis vector + text index)**, **P3 (retries, DLQ, replay, cancel, chaos-tested)** and **P4 (hybrid retrieval with cited, streamed answers)** are done. Eval/deploy (P5) is next. The full design is in [docs/specs.md](docs/specs.md), and the decisions are in [docs/adr/](docs/adr/).
 
 ## Problem
 
@@ -76,6 +76,9 @@ Design points:
 | `GET /batches/:id` · `GET /documents/:id` | progress: the batch with its documents, each with its per-stage status (`parse`/`chunk`/`embed`/`index`: status, attempts, timings); the document with its stages |
 | `POST /ask` | body `{question, stream: true}` → Server-Sent Events, see [Retrieval](#retrieval-p4); `stream: false` → JSON `{answer, citations, abstained}`; 503 `INDEX_UNAVAILABLE`, 502 `UPSTREAM_ERROR` |
 | `GET /documents/:id/url` | `{url, expiresIn}`: a 15-minute presigned GET (inline), used by citation chips to open `url#page=N` |
+| `POST /documents/:id/replay` | 202: reprocess as a new version (FAILED, INDEXED or CANCELLED documents; else 409 `NOT_REPLAYABLE`); the old version keeps answering until the new one is INDEXED |
+| `POST /batches/:id/cancel` | 202 `{cancelled, cancelRequested}`: unfinished documents stop at their next stage |
+| `GET /dead-letters` | open final failures (`?all=1` includes replayed ones): stage, version, kind, error code |
 | `GET /health` | no auth |
 
 All routes except `/health` need `X-Tenant-Key`. Through Caddy they are served under `/api`.
@@ -170,6 +173,44 @@ ask_done request_id=c348… calls=4 prompt_tokens=6303 completion_tokens=124 ms=
 
 The strategy and decomposition are settings (`RETRIEVAL_STRATEGY=vector_only|hybrid|hybrid_rerank`, `RETRIEVAL_DECOMPOSE`), so P5 can compare configurations without touching the route.
 
+## Failure handling (P3)
+
+How each failure in [docs/specs.md](docs/specs.md) §8 is handled:
+
+| Failure | Behaviour |
+|---|---|
+| OpenAI 429 / 5xx / timeout, S3 5xx, MySQL or Redis unreachable | **Transient.** The stage and document go to `RETRY_WAIT`; Celery retries with exponential backoff + full jitter, **never earlier than `Retry-After`**, capped at 300 s, up to 5 retries. Then the DLQ (`kind=exhausted`). |
+| Corrupt or encrypted PDF, unsupported type, no text, upstream 400/401/403, missing object | **Permanent.** FAILED at once with an error code, no retry, plus a DLQ row (`kind=permanent`). The batch becomes PARTIAL. |
+| Malicious or oversized file | Size and type quotas at upload (P1); `MAX_PAGES=500` before any extraction; OCR caps (pages, per-page timeout, budget); `worker-parse` is memory-limited (1 GB); every task has soft/hard time limits. |
+| Worker killed mid-task | `acks_late` + `reject_on_worker_lost`: a killed **pool child** (OOM) is requeued at once; a killed **container** is redelivered after the broker visibility timeout. Idempotent stages make the redo safe (no duplicate chunks; the embed redo only embeds missing rows). |
+| A document that kills its worker every time | Attempts are committed *before* each run, so a crash still counts; after 8 attempts of one stage → DLQ (`kind=attempt_limit`) instead of an endless loop. |
+| Redis index lost | `/ask` returns 503 `INDEX_UNAVAILABLE`; `flask reindex --all` rebuilds it from MySQL (P2). |
+| Duplicate `complete` call | Conditional update: no-op (P1). |
+
+**Dead letters and replay.**
+- Every final failure writes a `dead_letters` row in the same transaction as the FAILED status (stage, version, kind, error code, retries, attempts; never document text). The **Dead letters** tab lists them.
+- **Replay** (`POST /documents/:id/replay`, also a button in the UI) bumps `processing_version` and re-enters the pipeline through the outbox. Old versions' rows stay in MySQL; history is never overwritten.
+
+**Atomic version swap** ([ADR 0004](docs/adr/0004-version-swap-via-active-version.md)).
+- `documents.active_version` is the version retrieval serves. A replay leaves it alone, so the old version keeps answering, and the index stage flips it in the same UPDATE that marks the new version INDEXED.
+- `/ask` loads chunks with `chunks.version = documents.active_version`, so within one consistent read a document contributes exactly one version: **never both**, even while Redis briefly holds keys of two versions.
+- After any version ends without becoming active (failed or cancelled after writing its keys), its Redis keys are deleted, so the index holds only active versions.
+
+**Cancel** (`POST /batches/:id/cancel`, a button while a batch is live). Documents not yet uploaded are cancelled at once; the rest become `CANCEL_REQUESTED`. Each task checks this at start, and again after its work commits; it then marks the document CANCELLED and enqueues nothing further. The batch ends CANCELLED.
+
+**Chaos test** (`scripts/chaos_embed.py`, results in [docs/results.md](docs/results.md)):
+1. Upload 50 PDFs, `docker kill` the embed worker while embed tasks are running, restart it.
+2. Check: every document ends INDEXED or FAILED; chunk counts equal what the chunker produces locally (no duplicates, none missing); Redis count = MySQL count; 0 keys for non-active versions; and the kill really hit in-flight tasks (they were redelivered and finished).
+
+It runs on `docker-compose.chaos.yml`: the same code with a 120 s visibility timeout instead of 1800 s, so a run takes minutes ([ADR 0003](docs/adr/0003-stage-queues.md) explains the trade-off). The same overlay enables a fault hook (`FAULT_EMBED_429_PREFIX`; refused when `APP_ENV=production`) that `scripts/smoke_dlq.py` uses to show 429 → retries → DLQ → replay → INDEXED as version 2.
+
+**Results** ([docs/results.md](docs/results.md)):
+
+| Check | Result |
+|---|---|
+| Chaos: `docker kill` of the embed worker mid-run, 3 runs × 50 PDFs | **3/3 passed**: 150/150 documents INDEXED, 2,030 chunks with 0 duplicates and 0 missing, Redis = MySQL, 0 non-active keys. In-flight embed tasks were redelivered (2 per run) and finished; the last documents settled 108–121 s after the restart, i.e. the 120 s chaos visibility timeout. |
+| DLQ demo: injected 429s on version 1 | 6 attempts with jittered backoff (1, 1, 1, 2, ~15 s), then DLQ `exhausted`/`RATE_LIMITED` → replay → INDEXED as version 2 three seconds later, only v2 keys in Redis, `/ask` cites it (7/7 checks) |
+
 ## Run locally
 
 Requirements: Docker (Compose v2), Node 20+, and [uv](https://docs.astral.sh/uv/) (it installs Python 3.11 for the project).
@@ -237,6 +278,15 @@ Requirements: Docker (Compose v2), Node 20+, and [uv](https://docs.astral.sh/uv/
    uv run python scripts/smoke_ask.py
    ```
 
+7. Chaos and DLQ checks (P3) on the chaos overlay, then back to normal:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
+   uv run python scripts/chaos_embed.py --runs 3     # or --mode child
+   uv run python scripts/smoke_dlq.py
+   docker compose up -d
+   ```
+
 For UI development, run `npm --prefix apps/web run dev` (port 5174). It proxies `/api` to Caddy.
 
 Notes:
@@ -257,6 +307,11 @@ uv run pytest -m integration      # real MinIO + Redis tests (incl. /ask with a 
 | Pure logic: object keys, filename sanitising, quota rules, schema validation; parsing (sample PDFs, encrypted/corrupt, OCR routing and caps, DOCX pages), chunking (page mapping, headings, overlap, size bounds), float32 encoding | `tests/unit` | nothing (no Docker) | none; the real-Tesseract test runs only if `tesseract` is on PATH |
 | API + DB: quotas end to end, duplicate/concurrent `complete`, tenant isolation, auth, error envelope, CLI; **pipeline**: relay + SKIP LOCKED, a stage run twice, a redo without `processed_jobs`, a racing duplicate, crash mid-embed, permanent error → FAILED with no retry, batch DONE/PARTIAL, stage progress in the API | `tests/db` | compose MySQL | `FakeStorage`, `FakeEmbedder`, recorded enqueues |
 | End to end: presign → real PUT → complete; MinIO rejects tampered bytes, oversize bodies and missing signed headers; **the 5 samples upload → relay → parse → chunk → embed → index** with eager Celery; FT.SEARCH finds every known phrase in the right document and page; MySQL count = Redis count; `reindex` (one tenant and `--all`) restores an identical fingerprint | `tests/integration` | MySQL + MinIO + Redis | real MinIO (bucket `pagecite-test`), real Redis under `idx:test_chunks` / `test:chunk:`, `FakeEmbedder` (no OpenAI cost), Tesseract if installed |
+
+P3 adds:
+- **unit:** error classification (OpenAI/S3/DB/Redis), Retry-After parsing, backoff and jitter bounds, the timing invariants, the production fault-injection guard, the fault embedder, the page limit
+- **DB:** retry → `RETRY_WAIT` with a Retry-After countdown; exhausted → DLQ; permanent → DLQ with no retry; **a crash after `begin_stage` still counts, and the next delivery goes to DLQ `attempt_limit`**; cancel (the endpoint, at task start, mid-handler); replay (version bump, outbox, DLQ replayed, 409, tenant scoping); the DLQ list
+- **integration** (real retries through eager Celery): a 429 twice then success; exhausted → DLQ → replay → INDEXED as v2 with only v2 keys; **the swap never serves both versions** (hooks between the HSET and the commit, and between the commit and the cleanup); reindex during a replay keeps v1; **v2 failing or cancelled after its HSET leaves 0 v2 keys and v1 still answers `/ask`**; cancel mid-pipeline
 
 P4 adds:
 - **unit:** the text query builder, the FT.HYBRID/KNN reply parsers, merge, the decomposition heuristic and fallback, rerank id mapping and fallback, the prompt (rules, fencing, the injection guard), citation extraction, abstain detection, SSE framing, the OpenAI client timeouts

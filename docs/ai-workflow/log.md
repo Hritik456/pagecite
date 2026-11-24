@@ -6,7 +6,7 @@ After each phase, fill one row. The token and cost numbers come from `/cost` in 
 |---|---|---|---|---|---|---|---|
 | P1 | 2026-11-24 | 1 | | | Spec gaps settled before coding: SHA-256 via native S3 checksum (not user metadata); `tenants.api_key_hash` added to V1; BIGINT ids; DB tests on a real MySQL test DB with the Flyway schema (no SQLite), MinIO only in `-m integration` | | pytest -q ✅ (62), pytest -m integration ✅ (5), HTTP replay of the UI flow ✅; browser check by hand: pending |
 | P2 | 2026-11-24 | 1 | | | Before coding: embeddings stored in MySQL (V2) so reindex is identical; `document_pages` table for parse output; integration in-process + a `smoke_ingest.py` Done-when run on the real stack; generated, committed samples. On plan review: visibility_timeout 7200 s → 1800 s plus time limits and OCR caps; `reindex --all` so FLUSHDB can't lose other tenants; ADR note on why `processed_jobs` is inserted last | | pytest -q ✅ (116), pytest -m integration ✅ (13), smoke_ingest ✅ 13/13 (5/5 INDEXED incl. OCR, phrases found, MySQL = Redis), --reindex-check ✅ 17/17 (identical fingerprint, 3 tenants); repo public: pending (your step) |
-| P3 | | | | | | | |
+| P3 | 2026-11-24 | 1 | | | Before coding: every final failure gets a DLQ row; replay from FAILED/INDEXED/CANCELLED; fault injection through an env-gated `FaultyEmbedder` in context.py, refused in production (with a test); §8 limits (page cap, parse mem_limit, attempt cap). Explicit design answers: chaos overlay with VT 120 s (production 1800 s) + restore throttle 1; `active_version` for the atomic swap. On plan review: attempts committed before the handler (crash-count test); orphan Redis keys deleted after any non-active terminal version (+ chaos invariant) | | pytest -q ✅ (220), pytest -m integration ✅ (36), chaos ✅ 3/3 runs (9/9 invariants each, real mid-task kills), smoke_dlq ✅ 7/7 (429 → 6 attempts → DLQ → replay → v2 INDEXED) |
 | P4 | 2026-11-24 | 1 | | | Before coding: FT.HYBRID via raw command + tested parser (not the experimental helper); a synthetic FIAS circulars corpus (fictional org, "Synthetic sample" headers) whose near-twin IDs show hybrid > vector; citations event = only the cited blocks. On plan review: release the DB connection before the SSE stream (+ tests), explicit OpenAI timeouts, a prompt-injection guard + injected page and question. questions.json reviewed against the PDF (added "mandatory", "16:00") | | pytest -q ✅ (167), pytest -m integration ✅ (29), smoke_ask ✅ 31/31 (5 cited answers on the right pages, off-topic → exact abstain, injection not followed, token lines per call) |
 | P5 | | | | | | | |
 | P6 | | | | | | | |
@@ -53,6 +53,25 @@ After each phase, fill one row. The token and cost numbers come from `/cost` in 
 - Plan review: DB connection was held during LLM streaming → released before first token (pool exhaustion); added timeouts, no retry on streams.
 - Plan review: added prompt-injection guard + an injected test page; verified the answer ignores it.
 - Eval review: q5/q7 checked only half the question → added "mandatory" and "16:00".
+### P3
+- Model: Opus for planning and implementation (single session).
+- Read kombu/celery source before designing:
+  - a killed **pool child** is requeued at once (`reject_on_worker_lost`)
+  - a killed **container** waits for the visibility timeout, and kombu's restore scan is throttled to every 10th tick (about 100 s), so `unacked_restore_throttle=1` brings it to VT + 10 s
+  - ETA retries are held unacked, so `retry_backoff_max` must stay below VT
+  - eager mode re-runs `task.retry()` synchronously (but only with `task_eager_propagates=False`)
+- **The first chaos run was invalid and the harness caught it.** Embed tasks took about 0.7 s, so the two "running" tasks had finished before `docker kill` landed, and the "≥ 1 redelivered" invariant would have failed. The fix: longer documents (about 13 chunks, 4 embed calls), the container id resolved up front, and the kill triggered on a task that started < 0.5 s ago. After that, every run had real redeliveries.
+- Chaos timeline matches the design: 48/50 documents done by about 68 s, the last two (killed in flight) at about 126 s = VT 120 + scan.
+- Bugs caught by tests while building:
+  - a malformed `Retry-After` crashed the classifier (it's now ignored)
+  - the SQL `:v` inside a `text()` LIKE pattern was read as a bind parameter (chaos script)
+- The P4 concurrency test (18 streams vs a 15-connection pool) failed once under heavy host load: one request lost its MySQL connection (`2013`) through Docker Desktop's port forwarding, with no server-side errors (`Max_used_connections` 30 of 151, no restarts). It passed 7/7 reruns. Recorded as an environment flake, not hidden.
+- Interview point: the version swap is one MySQL UPDATE (`status='INDEXED', active_version=v`) plus a join in the retrieval read, so no instant serves two versions. Redis cleanup is best-effort *after* the switch, and the chaos run checks "0 keys for non-active versions".
+- Interview point: retries honour Retry-After but are capped below the visibility timeout. The cap is a deliberate trade-off: an ETA longer than VT would duplicate the task.
+- Plan review: attempt counter must commit before the handler, or an OOM-looping poison PDF never reaches the cap.
+- Plan review: orphan Redis keys when v2 fails/cancels after HSET → general "delete non-active version keys" rule + chaos invariant.
+- Plan review: chaos test vs 30-min visibility timeout → chaos override (120 s) with a production guard.
+- Harness caught: first chaos run killed nothing in flight (tasks too fast); made it fail instead of silently passing.
 ## Totals (fill at the end, for README and interviews)
 
 - Total sessions:

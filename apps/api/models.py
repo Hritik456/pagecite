@@ -90,6 +90,8 @@ class Document(Base):
     mime: Mapped[str] = mapped_column(String(127))
     status: Mapped[str] = mapped_column(String(24), default=DocumentStatus.CREATED)
     processing_version: Mapped[int] = mapped_column(default=1)
+    # The version retrieval serves (V3). Switched in the transaction that marks a version INDEXED.
+    active_version: Mapped[int | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     updated_at: Mapped[datetime] = mapped_column(server_default=FetchedValue(), server_onupdate=FetchedValue())
 
@@ -154,3 +156,20 @@ class ProcessedJob(Base):
 
     job_key: Mapped[str] = mapped_column(String(191), primary_key=True)
     processed_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+
+
+class DeadLetter(Base):
+    """A final failure (V1 + V3 kind/error_code). Replay marks replayed_at."""
+
+    __tablename__ = "dead_letters"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id"))
+    stage: Mapped[str] = mapped_column(String(8))
+    version: Mapped[int]
+    kind: Mapped[str] = mapped_column(String(16))  # exhausted | permanent | attempt_limit
+    error_code: Mapped[str | None] = mapped_column(String(40))
+    error: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    replayed_at: Mapped[datetime | None]

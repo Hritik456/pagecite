@@ -36,5 +36,5 @@ def handle(ctx: WorkerContext, session: Session, doc: DocRef) -> dict:
 
 
 @app.task(name="pagecite.parse", **STAGE_TASK_OPTIONS)
-def parse(document_id: int, version: int) -> None:
-    run_stage(get_context(), StageName.PARSE, document_id, version, handle)
+def parse(self, document_id: int, version: int) -> None:
+    run_stage(get_context(), StageName.PARSE, document_id, version, handle, task=self)

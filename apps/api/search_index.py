@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import Settings
-from .models import Chunk, Document, DocumentStatus
+from .models import Chunk, Document
 
 
 @dataclass(frozen=True)
@@ -188,20 +188,41 @@ def fingerprint(r: redis.Redis, cfg: IndexConfig, tenant_id: int | None = None) 
 
 
 def indexable_chunks_query(tenant_id: int | None = None):
-    """Chunks that belong in the index: current version of INDEXED documents, embedding stored."""
+    """Chunks that belong in the index: each document's ACTIVE version (V3), embedding stored.
+
+    Not "status = INDEXED": during a replay the document is PARSING/... for v2 while v1 is still the
+    active, served version, and a reindex at that moment must keep v1 (docs/adr/0004).
+    """
     q = (
         select(Chunk.tenant_id, Chunk.document_id, Chunk.id, Chunk.text, Chunk.page_from, Chunk.embedding)
         .join(Document, Document.id == Chunk.document_id)
-        .where(
-            Chunk.version == Document.processing_version,
-            Document.status == DocumentStatus.INDEXED,
-            Chunk.embedding_done.is_(True),
-        )
+        .where(Chunk.version == Document.active_version, Chunk.embedding_done.is_(True))
         .order_by(Chunk.tenant_id, Chunk.id)
     )
     if tenant_id is not None:
         q = q.where(Chunk.tenant_id == tenant_id)
     return q
+
+
+def delete_inactive_version_keys(session: Session, r: redis.Redis, cfg: IndexConfig, document_id: int) -> int:
+    """Delete the Redis keys of every version of a document that is not its active version.
+
+    Run after a version swap (old version) and after a version ends FAILED/CANCELLED without
+    becoming active (orphans). Chunk ids come from MySQL; idempotent.
+    """
+    rows = session.execute(
+        select(Chunk.tenant_id, Chunk.id)
+        .join(Document, Document.id == Chunk.document_id)
+        .where(
+            Chunk.document_id == document_id,
+            (Document.active_version.is_(None)) | (Chunk.version != Document.active_version),
+        )
+    ).all()
+    keys = [chunk_key(cfg, t, cid) for t, cid in rows]
+    deleted = 0
+    for start in range(0, len(keys), 500):
+        deleted += r.unlink(*keys[start : start + 500])
+    return deleted
 
 
 def rebuild(session: Session, r: redis.Redis, cfg: IndexConfig, tenant_id: int | None = None) -> dict[int, int]:

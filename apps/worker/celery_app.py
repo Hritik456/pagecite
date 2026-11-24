@@ -11,22 +11,34 @@ from celery.signals import worker_ready
 from apps.api.config import Settings
 from apps.api.search_index import ensure_index, index_config, make_redis
 
-# The broker visibility timeout bounds how long an unacked task of a SIGKILLed/OOM-killed worker
-# waits before redelivery. Every task must finish well inside it, hence the time limits below.
-VISIBILITY_TIMEOUT_S = 1800
-STAGE_SOFT_TIME_LIMIT_S = 1200
-STAGE_TIME_LIMIT_S = 1500
+from .errors import TransientError
+
+_settings = Settings()  # validates: ocr budget < soft limit < hard limit < visibility timeout
+
+# The broker visibility timeout bounds how long an unacked task of a SIGKILLed worker *container*
+# waits before redelivery (a killed pool child is requeued at once: reject_on_worker_lost).
+# Every task must finish well inside it, hence the time limits. Values are settings (docs/adr/0003):
+# production 1800 s; the chaos override uses 120 s so a `docker kill` run recovers in ~2 min.
+VISIBILITY_TIMEOUT_S = _settings.broker_visibility_timeout_s
+STAGE_SOFT_TIME_LIMIT_S = _settings.stage_soft_time_limit_s
+STAGE_TIME_LIMIT_S = _settings.stage_time_limit_s
 
 # Applied to every stage task explicitly (CLAUDE.md invariant), not only via app defaults.
+# run_stage() retries TransientError itself (to honour Retry-After); autoretry_for is the safety net
+# for a TransientError raised outside the handler. Both share max_retries.
 STAGE_TASK_OPTIONS = {
+    "bind": True,
     "acks_late": True,
     "reject_on_worker_lost": True,
     "soft_time_limit": STAGE_SOFT_TIME_LIMIT_S,
     "time_limit": STAGE_TIME_LIMIT_S,
     "ignore_result": True,
+    "autoretry_for": (TransientError,),
+    "retry_backoff": True,
+    "retry_backoff_max": _settings.retry_backoff_max_s,
+    "retry_jitter": True,
+    "max_retries": _settings.max_retries,
 }
-
-_settings = Settings()
 
 app = Celery(
     "pagecite",
@@ -43,7 +55,12 @@ app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,  # a long OCR task must not hold other tasks hostage
     task_ignore_result=True,
-    broker_transport_options={"visibility_timeout": VISIBILITY_TIMEOUT_S},
+    broker_transport_options={
+        "visibility_timeout": VISIBILITY_TIMEOUT_S,
+        # kombu scans for expired unacked messages every 10 s but, by default, acts on every 10th scan
+        # (~100 s). Throttle 1: a dead container's task returns within visibility_timeout + ~10 s.
+        "unacked_restore_throttle": 1,
+    },
     broker_connection_retry_on_startup=True,
     task_routes={
         "pagecite.parse": {"queue": "parse"},
