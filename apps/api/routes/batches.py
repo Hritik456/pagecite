@@ -8,11 +8,11 @@ from sqlalchemy import select
 
 from ..errors import AppError
 from ..keys import object_key
-from ..models import Batch, BatchStatus, Document, DocumentStatus
+from ..models import Batch, BatchStatus, Document, DocumentStage, DocumentStatus
 from ..quotas import BatchRequest, check_batch, sha256_hex_to_b64
 from ..state import current_tenant, get_session, get_storage
 from ..storage import required_put_headers
-from .views import batch_view, document_view
+from .views import batch_view, document_view, stage_view
 
 bp = Blueprint("batches", __name__)
 log = logging.getLogger(__name__)
@@ -77,4 +77,19 @@ def get_batch(batch_id: int):
     if batch is None:
         raise AppError("NOT_FOUND", "batch not found", 404)
     docs = session.scalars(select(Document).where(Document.batch_id == batch.id).order_by(Document.id)).all()
-    return jsonify({"batch": batch_view(batch), "documents": [document_view(d) for d in docs]})
+    # Per-stage progress (spec §6) for every document's current version, in one query.
+    stages = session.scalars(
+        select(DocumentStage)
+        .join(Document, Document.id == DocumentStage.document_id)
+        .where(Document.batch_id == batch.id, DocumentStage.version == Document.processing_version)
+        .order_by(DocumentStage.document_id, DocumentStage.id)
+    ).all()
+    by_doc: dict[int, list[dict]] = {}
+    for stage in stages:
+        by_doc.setdefault(stage.document_id, []).append(stage_view(stage))
+    return jsonify(
+        {
+            "batch": batch_view(batch),
+            "documents": [{**document_view(d), "stages": by_doc.get(d.id, [])} for d in docs],
+        }
+    )

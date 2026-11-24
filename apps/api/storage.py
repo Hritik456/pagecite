@@ -20,6 +20,7 @@ class ObjectInfo:
 class Storage(Protocol):
     def presign_put(self, key: str, content_type: str, checksum_sha256_b64: str) -> str: ...
     def head(self, key: str) -> ObjectInfo | None: ...
+    def get(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -80,6 +81,13 @@ class S3Storage:
         except BotoCoreError as exc:
             raise _unavailable(exc) from exc
         return ObjectInfo(size=resp["ContentLength"], checksum_sha256_b64=resp.get("ChecksumSHA256"))
+
+    def get(self, key: str) -> bytes:
+        """Whole object (used by the parse worker; file sizes are capped by tenant quotas)."""
+        try:
+            return self._client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        except (ClientError, BotoCoreError) as exc:
+            raise _unavailable(exc) from exc
 
     def delete(self, key: str) -> None:
         try:

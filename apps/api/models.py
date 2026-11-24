@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, String, Text
+from sqlalchemy import JSON, BigInteger, ForeignKey, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.schema import FetchedValue
 
@@ -32,6 +32,25 @@ class DocumentStatus(StrEnum):
     FAILED = "FAILED"
     CANCEL_REQUESTED = "CANCEL_REQUESTED"
     CANCELLED = "CANCELLED"
+
+
+class StageName(StrEnum):
+    PARSE = "parse"
+    CHUNK = "chunk"
+    EMBED = "embed"
+    INDEX = "index"
+
+
+class StageStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    RETRY_WAIT = "RETRY_WAIT"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+TERMINAL_DOCUMENT_STATUSES = frozenset({DocumentStatus.INDEXED, DocumentStatus.FAILED, DocumentStatus.CANCELLED})
 
 
 class Tenant(Base):
@@ -98,3 +117,40 @@ class OutboxEvent(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     published_at: Mapped[datetime | None]
+
+
+class DocumentPage(Base):
+    """Parse output: text per page (V2)."""
+
+    __tablename__ = "document_pages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id"))
+    version: Mapped[int]
+    page_no: Mapped[int]
+    text: Mapped[str] = mapped_column(Text)
+    ocr: Mapped[bool] = mapped_column(default=False)
+
+
+class Chunk(Base):
+    __tablename__ = "chunks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id"))
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"))
+    version: Mapped[int]
+    ord: Mapped[int]
+    page_from: Mapped[int]
+    page_to: Mapped[int]
+    text: Mapped[str] = mapped_column(Text)
+    token_count: Mapped[int]
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    embedding_model: Mapped[str | None] = mapped_column(String(64))
+    embedding_done: Mapped[bool] = mapped_column(default=False)
+
+
+class ProcessedJob(Base):
+    __tablename__ = "processed_jobs"
+
+    job_key: Mapped[str] = mapped_column(String(191), primary_key=True)
+    processed_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

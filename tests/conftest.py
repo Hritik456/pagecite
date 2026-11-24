@@ -14,17 +14,22 @@ from flask.testing import FlaskClient
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from apps.api import create_app
 from apps.api.cli import create_tenant
 from apps.api.config import Settings
+from apps.api.search_index import index_config
 from apps.api.storage import Storage
+from apps.worker.context import WorkerContext
+from apps.worker.embedding import FakeEmbedder
 from tests.fakes import FakeStorage
 
 START_HINT = "run `docker compose up -d mysql flyway-test` first (see README, Testing)"
+TEST_INDEX_NAME = "idx:test_chunks"
+TEST_INDEX_PREFIX = "test:chunk:"
 TABLES = [
-    "outbox_events", "eval_runs", "dead_letters", "processed_jobs", "chunks",
+    "outbox_events", "eval_runs", "dead_letters", "processed_jobs", "chunks", "document_pages",
     "document_stages", "documents", "batches", "tenants",
 ]
 
@@ -70,16 +75,58 @@ def clean_db(db_engine: Engine) -> Engine:
     return db_engine
 
 
-def make_test_app(test_env: TestEnv, storage: Storage, **overrides) -> Flask:
-    settings = Settings(
-        database_url=test_env.test_database_url,
-        s3_bucket=overrides.pop("s3_bucket", "unused-in-db-tests"),
-        log_level="WARNING",
+def test_settings(test_env: TestEnv, **overrides) -> Settings:
+    """App/worker settings for tests: test DB, and a test-only Redis index name and key prefix."""
+    values = {
+        "database_url": test_env.test_database_url,
+        "s3_bucket": "unused-in-db-tests",
+        "log_level": "WARNING",
+        "index_name": TEST_INDEX_NAME,
+        "index_prefix": TEST_INDEX_PREFIX,
         **overrides,
-    )
-    app = create_app(settings=settings, storage=storage)
+    }
+    return Settings(**values)
+
+
+test_settings.__test__ = False  # not a test
+
+
+def make_test_app(test_env: TestEnv, storage: Storage, **overrides) -> Flask:
+    app = create_app(settings=test_settings(test_env, **overrides), storage=storage)
     app.config["TESTING"] = True
     return app
+
+
+class Recorder:
+    """Stands in for the Celery enqueue: records (task_name, *args)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def __call__(self, task_name: str, *args) -> None:
+        self.calls.append((task_name, *args))
+
+    def names(self) -> list[str]:
+        return [c[0] for c in self.calls]
+
+
+def make_worker_ctx(test_env: TestEnv, storage: Storage, **kwargs) -> WorkerContext:
+    """kwargs: redis, embedder, ocr, enqueue, clock, plus any Settings override."""
+    parts = {k: kwargs.pop(k) for k in ("redis", "embedder", "ocr", "enqueue", "clock") if k in kwargs}
+    settings = test_settings(test_env, **kwargs)
+    ctx = WorkerContext(
+        settings=settings,
+        sessions=sessionmaker(create_engine(settings.database_url, pool_pre_ping=True), expire_on_commit=False),
+        storage=storage,
+        redis=parts.get("redis"),
+        index=index_config(settings),
+        embedder=parts.get("embedder") or FakeEmbedder(dim=settings.embed_dim),
+        ocr=parts.get("ocr") or (lambda image, timeout: "stub ocr text"),
+        enqueue=parts.get("enqueue") or Recorder(),
+    )
+    if "clock" in parts:
+        ctx.clock = parts["clock"]
+    return ctx
 
 
 @pytest.fixture

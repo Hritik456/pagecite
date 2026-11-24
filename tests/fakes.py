@@ -32,6 +32,9 @@ class FakeStorage:
             return None
         return ObjectInfo(size=len(data), checksum_sha256_b64=b64_sha256(data))
 
+    def get(self, key: str) -> bytes:
+        return self.objects[key]
+
     def delete(self, key: str) -> None:
         self.objects.pop(key, None)
         self.deleted.append(key)

@@ -1,0 +1,32 @@
+[
+  {
+    "file": "01-leave-policy.pdf",
+    "phrase": "cobalt heron allowance",
+    "page": 2,
+    "scanned": false
+  },
+  {
+    "file": "02-procurement-manual.pdf",
+    "phrase": "quartz meridian clause",
+    "page": 2,
+    "scanned": false
+  },
+  {
+    "file": "03-data-retention.pdf",
+    "phrase": "saffron lattice protocol",
+    "page": 2,
+    "scanned": false
+  },
+  {
+    "file": "04-travel-rules.pdf",
+    "phrase": "obsidian tidewater circular",
+    "page": 2,
+    "scanned": false
+  },
+  {
+    "file": "05-scanned-notice.pdf",
+    "phrase": "granite lantern notice",
+    "page": 1,
+    "scanned": true
+  }
+]

@@ -4,13 +4,15 @@ from collections.abc import Iterator
 
 import boto3
 import pytest
+import redis
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import Flask
 from sqlalchemy import Engine
 
 from apps.api.config import Settings
+from apps.api.search_index import IndexConfig, delete_all_keys, drop_index, make_redis
 from apps.api.storage import S3Storage
-from tests.conftest import TestEnv, make_test_app
+from tests.conftest import TEST_INDEX_NAME, TEST_INDEX_PREFIX, TestEnv, make_test_app
 
 START_HINT = "run `docker compose up -d mysql flyway-test minio minio-init` first (see README, Testing)"
 
@@ -49,3 +51,22 @@ def s3_app(clean_db: Engine, empty_bucket: None, test_env: TestEnv, s3_storage: 
     app = make_test_app(test_env, s3_storage, s3_bucket=s3_storage.bucket)
     yield app
     app.extensions["pagecite"].engine.dispose()
+
+
+@pytest.fixture
+def redis_index(s3_settings: Settings) -> Iterator[tuple[redis.Redis, IndexConfig]]:
+    """The real Redis, under a test-only index name and key prefix; emptied before and after."""
+    r = make_redis(s3_settings.redis_url)
+    try:
+        r.ping()
+    except redis.ConnectionError as exc:
+        pytest.fail(f"cannot reach Redis ({exc}); run `docker compose up -d redis`", pytrace=False)
+    cfg = IndexConfig(name=TEST_INDEX_NAME, prefix=TEST_INDEX_PREFIX, dim=s3_settings.embed_dim)
+
+    def reset() -> None:
+        drop_index(r, cfg)
+        delete_all_keys(r, cfg)
+
+    reset()
+    yield r, cfg
+    reset()

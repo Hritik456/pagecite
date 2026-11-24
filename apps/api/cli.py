@@ -1,4 +1,4 @@
-"""flask --app apps.api seed-tenant ..."""
+"""flask --app apps.api seed-tenant ... | reindex (--tenant <id> | --all)"""
 
 import click
 from flask import Flask
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .auth import hash_key, new_api_key
 from .models import Tenant
+from .search_index import index_config, make_redis, rebuild
 from .state import app_state
 
 
@@ -37,3 +38,20 @@ def register_cli(app: Flask) -> None:
         click.echo(f"tenant_id={tenant.id}")
         click.echo(f"api_key={key}")
         click.echo("Store the key now: only its SHA-256 hash is saved.")
+
+    @app.cli.command("reindex")
+    @click.option("--tenant", "tenant_id", type=int, help="Rebuild one tenant's chunks.")
+    @click.option("--all", "all_tenants", is_flag=True, help="Rebuild every tenant (e.g. after FLUSHDB).")
+    def reindex(tenant_id: int | None, all_tenants: bool) -> None:
+        """Rebuild the Redis index from MySQL (the source of truth). No embedding API calls."""
+        if (tenant_id is None) == (not all_tenants):
+            raise click.UsageError("give exactly one of --tenant <id> or --all")
+        settings = app_state().settings
+        r = make_redis(settings.redis_url)
+        with app_state().sessions() as session:
+            written = rebuild(session, r, index_config(settings), tenant_id)
+        if tenant_id is not None:
+            written.setdefault(tenant_id, 0)
+        for tid, count in sorted(written.items()):
+            click.echo(f"tenant={tid} chunks={count}")
+        click.echo(f"total={sum(written.values())}")

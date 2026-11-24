@@ -2,6 +2,30 @@ name: pagecite
 
 # Values come from .env (see .env.example; local-dev values are in README "Run locally").
 
+# Relay + stage workers: one image (Tesseract included), one service per queue (docs/adr/0003).
+x-worker: &worker
+  build:
+    context: .
+    dockerfile: apps/worker/Dockerfile
+  image: pagecite-worker:local
+  env_file: .env
+  environment:
+    DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+    S3_ENDPOINT_URL: http://minio:9000
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+  depends_on:
+    flyway:
+      condition: service_completed_successfully
+    minio-init:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+  # Warm shutdown: let running tasks finish. A task killed mid-run is redelivered (acks_late),
+  # but only after the broker visibility timeout.
+  stop_grace_period: 120s
+
 x-flyway: &flyway
   image: flyway/flyway:11
   volumes:
@@ -31,11 +55,17 @@ services:
       retries: 40
 
   redis:
+    # DB 0: search index (derived from MySQL; `reindex` rebuilds it). DB 1: Celery broker.
     image: redis:8.4
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   flyway:
     <<: *flyway
@@ -100,6 +130,7 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       # Presigned URLs must carry the host the browser uses.
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL}
+      REDIS_URL: redis://redis:6379/0  # `flask reindex`
     expose:
       - "8000"
     depends_on:
@@ -125,6 +156,28 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  relay:
+    <<: *worker
+    command: ["python", "-m", "apps.worker.relay"]
+
+  worker-parse:
+    <<: *worker
+    # CPU-bound (pdfplumber + Tesseract): small, separate pool so OCR never blocks other stages.
+    command: ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "parse", "-c", "2", "-n", "parse@%h", "--loglevel", "INFO"]
+
+  worker-chunk:
+    <<: *worker
+    command: ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "chunk", "-c", "2", "-n", "chunk@%h", "--loglevel", "INFO"]
+
+  worker-embed:
+    <<: *worker
+    # Concurrency is the cap on parallel OpenAI calls (rate limits).
+    command: ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "embed", "-c", "2", "-n", "embed@%h", "--loglevel", "INFO"]
+
+  worker-index:
+    <<: *worker
+    command: ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "index", "-c", "2", "-n", "index@%h", "--loglevel", "INFO"]
 
 volumes:
   mysql-data:

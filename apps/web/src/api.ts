@@ -14,6 +14,15 @@ export type Upload = {
 
 export type CreateBatchResponse = { batchId: number; uploads: Upload[] };
 
+export type StageName = "parse" | "chunk" | "embed" | "index";
+
+export type StageView = {
+  stage: StageName;
+  version: number;
+  status: "PENDING" | "RUNNING" | "RETRY_WAIT" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  attempts: number;
+};
+
 export type DocumentView = {
   id: number;
   batchId: number;
@@ -22,7 +31,12 @@ export type DocumentView = {
   mime: string;
   status: string;
   processingVersion: number;
+  /** Present in GET /batches/:id: per-stage progress for the current version. */
+  stages?: StageView[];
 };
+
+export const TERMINAL_DOCUMENT_STATUSES = new Set(["INDEXED", "FAILED", "CANCELLED"]);
+export const TERMINAL_BATCH_STATUSES = new Set(["DONE", "PARTIAL", "CANCELLED"]);
 
 export type BatchView = { id: number; status: string; total: number; succeeded: number; failed: number };
 
