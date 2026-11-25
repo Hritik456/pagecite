@@ -1,0 +1,81 @@
+# CI (P5 Part A): unit + DB tests against MySQL 8.4 with the Flyway migrations, and the web build.
+# No deploy here: the deploy workflow is P5 Part B.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (unit + DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: pagecite_test
+          MYSQL_USER: pagecite
+          MYSQL_PASSWORD: pagecite-ci
+          MYSQL_ROOT_PASSWORD: root-ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot-ci --silent"
+          --health-interval 5s --health-timeout 5s --health-retries 40
+    env:
+      # Read by tests/conftest.py (TestEnv). Tests build their own Settings from it.
+      TEST_DATABASE_URL: mysql+pymysql://pagecite:pagecite-ci@127.0.0.1:3306/pagecite_test
+      # Required Settings fields: the Celery app builds Settings() at import, which locally comes
+      # from .env. CI has no .env; nothing connects to these during pytest -q.
+      DATABASE_URL: mysql+pymysql://pagecite:pagecite-ci@127.0.0.1:3306/pagecite_test
+      S3_BUCKET: pagecite-ci-unused
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Flyway migrate (same image and migrations as docker-compose.yml)
+        run: >-
+          docker run --rm --network host
+          -v "$GITHUB_WORKSPACE/db/migrations:/flyway/migrations:ro"
+          flyway/flyway:11
+          "-url=jdbc:mysql://127.0.0.1:3306/pagecite_test?allowPublicKeyRetrieval=true&useSSL=false"
+          -user=pagecite -password=pagecite-ci
+          -locations=filesystem:/flyway/migrations -connectRetries=30
+          migrate
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install (locked)
+        run: uv sync --frozen
+
+      - name: pytest -q
+        # Integration tests (MinIO, Redis) are excluded by the default `-m "not integration"`;
+        # the real-Tesseract test skips when tesseract is not installed.
+        run: uv run pytest -q
+
+  web:
+    name: web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run build

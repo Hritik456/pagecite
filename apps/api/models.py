@@ -1,10 +1,11 @@
 """ORM mappings for the tables P1 uses. Flyway owns the DDL (db/migrations); these only map it."""
 
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, LargeBinary, String, Text
+from sqlalchemy import JSON, BigInteger, ForeignKey, LargeBinary, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.schema import FetchedValue
 
@@ -173,3 +174,26 @@ class DeadLetter(Base):
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
     replayed_at: Mapped[datetime | None]
+
+
+class EvalRun(Base):
+    """One config's result over the golden set (V1 + V4). Written by `python -m eval.run`."""
+
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    label: Mapped[str | None] = mapped_column(String(64))
+    n_questions: Mapped[int]
+    hit_at_5: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    mrr: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    faithfulness: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    abstention_accuracy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    false_abstain_rate: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    avg_tokens: Mapped[Decimal | None] = mapped_column(Numeric(10, 1))
+    avg_latency_ms: Mapped[Decimal | None] = mapped_column(Numeric(10, 1))
+    n_errors: Mapped[int] = mapped_column(default=0)
+    est_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    git_sha: Mapped[str | None] = mapped_column(String(40))
+    judge_model: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())

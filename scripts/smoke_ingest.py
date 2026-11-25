@@ -50,10 +50,11 @@ class Checks:
         return all(ok for _, ok, _ in self.results)
 
 
-def seed_tenant() -> str:
-    name = f"smoke-{time.strftime('%Y%m%d-%H%M%S')}"
+def seed_tenant(name: str | None = None, max_batch_files: int = 50) -> str:
+    name = name or f"smoke-{time.strftime('%Y%m%d-%H%M%S')}"
     out = subprocess.run(
-        [*COMPOSE_FLASK, "seed-tenant", "--name", name, "--max-file-mb", "25", "--max-batch-files", "50"],
+        [*COMPOSE_FLASK, "seed-tenant", "--name", name, "--max-file-mb", "25",
+         "--max-batch-files", str(max_batch_files)],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout
     key = next(line.split("=", 1)[1].strip() for line in out.splitlines() if line.startswith("api_key="))

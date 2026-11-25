@@ -1,0 +1,10 @@
+# P5 eval config: python -m eval.run --config configs/hybrid.yaml
+# Every key is required (eval/config.py): RetrievalConfig.decompose defaults to true, so a missing
+# key would silently change the strategy being measured.
+label: hybrid
+strategy: hybrid          # vector_only | hybrid | hybrid_rerank (apps/api/retrieval/pipeline.py)
+decompose: false
+k: 20                  # candidates per sub-query
+rerank_candidates: 20  # merged candidates kept (and reranked, for hybrid_rerank)
+top_n: 6               # context blocks given to the answer model
+passage_tokens: 200    # rerank passage length

@@ -40,3 +40,8 @@ caddy_config/
 Thumbs.db
 .idea/
 .claude/settings.local.json
+
+# --- P5: corpus and raw eval/load outputs ---
+corpus/rbi-pdfs/
+eval/out/
+load/out/

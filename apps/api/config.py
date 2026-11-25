@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     json_timeout_s: float = 20.0
     embed_timeout_s: float = 20.0
 
+    # Eval harness (P5): the LLM judge for faithfulness (`python -m eval.run`).
+    eval_judge_model: str = "gpt-5.4-mini"
+
     @model_validator(mode="after")
     def _check_timing(self) -> "Settings":
         chain = [

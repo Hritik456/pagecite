@@ -39,6 +39,32 @@ def register_cli(app: Flask) -> None:
         click.echo(f"api_key={key}")
         click.echo("Store the key now: only its SHA-256 hash is saved.")
 
+    @app.cli.command("purge-tenant")
+    @click.option("--tenant", "tenant_id", type=int, required=True, help="The tenant whose documents to delete.")
+    @click.option("--yes", is_flag=True, help="Confirm: delete this tenant's documents, chunks, index keys and objects.")
+    def purge_tenant_cmd(tenant_id: int, yes: bool) -> None:
+        """LOCAL/TEST ONLY: delete one tenant's documents from MySQL, Redis and S3 (keeps the tenant)."""
+        from .purge import PurgeRefused, purge_tenant, refuse_in_production
+
+        state = app_state()
+        try:
+            refuse_in_production(state.settings.app_env)  # before any connection is opened
+        except PurgeRefused as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not yes:
+            raise click.UsageError("this deletes data: pass --yes to confirm")
+        settings = state.settings
+        try:
+            report = purge_tenant(state.sessions, make_redis(settings.redis_url), index_config(settings),
+                                  state.storage, tenant_id)
+        except PurgeRefused as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(
+            f"tenant={report.tenant_id} documents={report.documents} batches={report.batches} "
+            f"redis_keys={report.redis_keys} s3_objects={report.s3_objects} "
+            f"processed_jobs={report.processed_jobs} outbox_events={report.outbox_events}"
+        )
+
     @app.cli.command("reindex")
     @click.option("--tenant", "tenant_id", type=int, help="Rebuild one tenant's chunks.")
     @click.option("--all", "all_tenants", is_flag=True, help="Rebuild every tenant (e.g. after FLUSHDB).")

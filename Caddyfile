@@ -6,6 +6,13 @@
 		reverse_proxy api:8000 {
 			# SSE (/ask): send every event as soon as the API writes it.
 			flush_interval -1
+			# Close idle upstream connections BEFORE gunicorn does (--keep-alive 75, apps/api/Dockerfile).
+			# With Caddy's default (2 min) against gunicorn's default (2 s), a request could be sent on a
+			# connection gunicorn was closing: reset -> 502, and a POST is not retried (found by the P5
+			# load test; tests/unit/test_proxy_keepalive.py keeps the order).
+			transport http {
+				keepalive 30s
+			}
 		}
 	}
 
