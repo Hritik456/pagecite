@@ -450,7 +450,7 @@ def rebuild(stamp: str, configs: list[EvalConfig], settings: Settings, judge_mod
 
     golden = {r.id: r for r in load_golden()}
     engine = create_engine(settings.database_url)
-    results, sha = [], None
+    results, sha, run_judge = [], None, judge_model
     try:
         for cfg in configs:
             path = OUT / f"{stamp}-{cfg.label}.jsonl"
@@ -472,6 +472,7 @@ def rebuild(stamp: str, configs: list[EvalConfig], settings: Settings, judge_mod
                 old = run.est_cost_usd
                 run.est_cost_usd = round(Decimal(str(res.total_cost_usd)), 4)
                 res.run_id, res.written, sha = run.id, True, run.git_sha
+                run_judge = run.judge_model or judge_model  # the judge that run used, not today's setting
             print(f"{cfg.label}: matches eval_runs id={res.run_id}; est_cost_usd {old} -> {res.total_cost_usd:.4f}")
             results.append(res)
     finally:
@@ -479,7 +480,7 @@ def rebuild(stamp: str, configs: list[EvalConfig], settings: Settings, judge_mod
     if write:
         at = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
         rows = load_golden()
-        write_results(results_markdown(results, rows, settings, judge_model, at=at, sha_dirty=(sha, git_sha()[1])))
+        write_results(results_markdown(results, rows, settings, run_judge, at=at, sha_dirty=(sha, git_sha()[1])))
         print(f"updated {RESULTS.relative_to(ROOT)}")
     return 0
 

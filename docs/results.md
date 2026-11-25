@@ -69,7 +69,7 @@ The run's details stored block numbers but not chunk ids, so not every verdict c
 
 **Load.** Parse is the bottleneck: its queue peaked at 173 of 200 documents while chunk, embed and index never exceeded 7, and 0 documents needed a retry (no OpenAI rate limiting at embed concurrency 2). The parse tail is contention, not document size alone: the same 83-page circular parsed in 18 s as one copy and 293 s as another. `GET /api/health` through Caddy stayed up (0 of 137 failed) but slowed to p95 2.1 s with Docker Desktop's 4 CPUs saturated. The first load run failed after 67 completes with a 502: Caddy reused an upstream connection that gunicorn (keep-alive 2 s by default) was closing. Caddy now drops idle upstream connections after 30 s and gunicorn keeps them 75 s; a unit test keeps that order.
 
-**Limitations.** One run per config (models are not deterministic). The judge uses the `gpt-5.4-mini` alias while the answers use the dated snapshot. 47 questions on one corpus. Load numbers are for a laptop (Docker Desktop: 4 CPUs, 4.8 GiB), with the 200 documents being the 60-file corpus repeated.
+**Limitations.** One run per config (models are not deterministic). The 2026-11-25 run used the `gpt-5.4-mini` alias as the judge; the judge is now pinned to the answers' snapshot `gpt-5.4-mini-2026-03-17` (the run was not repeated). 47 questions on one corpus. Load numbers are for a laptop (Docker Desktop: 4 CPUs, 4.8 GiB), with the 200 documents being the 60-file corpus repeated.
 
 ## Resume bullets (P5, measured)
 

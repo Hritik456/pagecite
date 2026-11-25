@@ -83,8 +83,9 @@ class Settings(BaseSettings):
     json_timeout_s: float = 20.0
     embed_timeout_s: float = 20.0
 
-    # Eval harness (P5): the LLM judge for faithfulness (`python -m eval.run`).
-    eval_judge_model: str = "gpt-5.4-mini"
+    # Eval harness (P5): the LLM judge for faithfulness (`python -m eval.run`). Pinned to the same dated
+    # snapshot the answers use (OPENAI_CHAT_MODEL in .env), so re-runs judge with the same model.
+    eval_judge_model: str = "gpt-5.4-mini-2026-03-17"
 
     @model_validator(mode="after")
     def _check_timing(self) -> "Settings":
