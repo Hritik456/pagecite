@@ -1,0 +1,370 @@
+{
+  "source": "RBI notifications (rbi.org.in), downloaded by corpus/download-rbi-pdfs.ps1",
+  "n_files": 60,
+  "n_pages": 395,
+  "excluded": [
+    "13697_NOT2555AA6FB63E154403D95A54E43A0716C1A.PDF"
+  ],
+  "files": [
+    {
+      "file": "13696_NT254F42FDC8A07F849ED856846F96E6FE308.PDF",
+      "sha256": "3c471e116ed2652e623e7b0cb28508ea2f5932b5a8b3fa07b198923b5e175170",
+      "size_bytes": 295879,
+      "pages": 2
+    },
+    {
+      "file": "13698_256NT69E7AC0A815E49618C2CB8CED5F6E5C6.PDF",
+      "sha256": "3f158d7bbedd237403dab7c67bafe7f25772ed9736a85cd8cac094d8cf2518dd",
+      "size_bytes": 270252,
+      "pages": 2
+    },
+    {
+      "file": "13699_NT25759AB959133674677945F7C4E392FD010.PDF",
+      "sha256": "c918c41a680846ead07eb8fb5a5917908a327b12c9088922c18958c204c4c7c0",
+      "size_bytes": 277675,
+      "pages": 2
+    },
+    {
+      "file": "13700_NT2588DAD76B149414739967E7D273D94EADF.PDF",
+      "sha256": "b2f2812b5aaefd8dabc96382183ed8a01680cda5c320c0b6e1ccd84b7023517c",
+      "size_bytes": 283216,
+      "pages": 2
+    },
+    {
+      "file": "13701_NT259D9547EEA18C0474490DBC9CADDF191B4.PDF",
+      "sha256": "2a9eec634abee839b5b8c8a7c8902ec1adc0e0e4bb8e451e804ab327113cc977",
+      "size_bytes": 277750,
+      "pages": 2
+    },
+    {
+      "file": "13702_NT2604569F184BDB641ED92EA1B7B04FE91A9.PDF",
+      "sha256": "091a4a3b85080953b80de2fc85e24e045b94922ec7128a6fe1b7e59b20e65db7",
+      "size_bytes": 282596,
+      "pages": 2
+    },
+    {
+      "file": "13703_NT26189BF34E0B0D049A89BA39ADB1EB863A1.PDF",
+      "sha256": "d0211d510643cd98febdda52aa2a98c46ef6d2fb111e9a752631d5d11c05bafc",
+      "size_bytes": 283211,
+      "pages": 2
+    },
+    {
+      "file": "13704_NT2621136F543AAF54E3C83DC6E3100941596.PDF",
+      "sha256": "20a3978ecb671c4c0f7ab6f22a10d8ae7828f554728c636a99d0f4b6ec508022",
+      "size_bytes": 282480,
+      "pages": 2
+    },
+    {
+      "file": "13705_472MDACBA450D67234F52BA2983DA6AED9DFC.PDF",
+      "sha256": "913cec2048cdc8debb5ac42e6bc805da36e2f3d227dd0c0d3abc75ac1416501a",
+      "size_bytes": 564968,
+      "pages": 49
+    },
+    {
+      "file": "13706_NT263695FF625A09A48248840B53359D48063.PDF",
+      "sha256": "8bcf2513679542d4f5636fb7a217a9a3493502732c3c2968f34d278f3ecd847c",
+      "size_bytes": 152934,
+      "pages": 2
+    },
+    {
+      "file": "13707_NT26408EF9CCC46424A929E01BF357BC7936C.PDF",
+      "sha256": "758ca34d7249caff66868a26240c424710dae948452512c57f0f5ea628499a19",
+      "size_bytes": 249339,
+      "pages": 2
+    },
+    {
+      "file": "13708_NT265E0CD6C792E7548DD945E004BEA0C948C.PDF",
+      "sha256": "aa33f74c17ed9350dc9b1825500786771403ab92a84f42dfa4881c76ce2fdacc",
+      "size_bytes": 249926,
+      "pages": 2
+    },
+    {
+      "file": "13709_NT2663B9D47D9B0A147A5A2F0574A11554B97.PDF",
+      "sha256": "85c91dbcda4ec7835960ad7d01adb0bb8a1b8bbeb14149145d55b1164a8d4ee8",
+      "size_bytes": 250073,
+      "pages": 2
+    },
+    {
+      "file": "13710_NT267F885FEF645D54E6DAC327AE684434E56.PDF",
+      "sha256": "fbbc46dd7874b3eaa2e0768b64ea4b101b8ffdcb3529356ca34c4a1ea192a4a8",
+      "size_bytes": 232302,
+      "pages": 2
+    },
+    {
+      "file": "13711_NT26840D3650D40D2475CB0378668FD8B8EC1.PDF",
+      "sha256": "4de478a2e8db526f552b830bbd35e7b74dc40801b13791915229bc466864dbaf",
+      "size_bytes": 231297,
+      "pages": 2
+    },
+    {
+      "file": "13712_NT269D2CF6DE13687460D8CFB6E8AD0CDEF4E.PDF",
+      "sha256": "88c8f50c9f51ed0751cc89cc2cc2fae548ac3a564a0c4ae49dcab381f3a166d9",
+      "size_bytes": 270161,
+      "pages": 2
+    },
+    {
+      "file": "13713_NOTI27024092026B5163644F687458B97DB7E5AF0FF4FDD.PDF",
+      "sha256": "93c944624b4c6ec1589c782c37c4dce064f4a5a16bffaf52f08cb00661b380d5",
+      "size_bytes": 208035,
+      "pages": 2
+    },
+    {
+      "file": "13714_FEMA23R2509202677C08DEDE2694B528FF6025930BF49F9.PDF",
+      "sha256": "d6b5a89147df89d8c6dc9d514ecd0eaae1b8db5d21cb9dde5ec6462bb964717a",
+      "size_bytes": 157321,
+      "pages": 1
+    },
+    {
+      "file": "13715_NOTI2713C3AD0FCF88D4E0682D80BD7FC932BF9.PDF",
+      "sha256": "a72b0c02b83457166d4f8691a13a22c2e9930b61c29a00bb94022bd8e7142887",
+      "size_bytes": 299955,
+      "pages": 3
+    },
+    {
+      "file": "13716_272MC011020266691348260DF4CF99ACE017F146409F1.PDF",
+      "sha256": "b8a13c2a7651eb84e68d733ff50125f02bb8a9e15d4cec6102f4661a628ac658",
+      "size_bytes": 265034,
+      "pages": 8
+    },
+    {
+      "file": "13717_NOTI27301102026D31353CD354443869BCAD069E0BF15CC.PDF",
+      "sha256": "15f4cdf2950f1a25e8f80a4b2b979046ed5cfc0a42cd9cecc5a51fd22fdbb401",
+      "size_bytes": 156945,
+      "pages": 1
+    },
+    {
+      "file": "13718_NOTI27401102026AA16BFEFF59341BF97FD2930B1A4A63C.PDF",
+      "sha256": "0cf07359c2e1bd0cb9ad63e445c7024ebc28eeb5b3f3dcb1f804cb00d5bac4fb",
+      "size_bytes": 444374,
+      "pages": 23
+    },
+    {
+      "file": "13719_NT27591A82040B28E448E9C6F66A9C2855D70.PDF",
+      "sha256": "e84980f5b7f0f35bd974fbbde1b6f1a18b481136799737011ba4556ee632ff37",
+      "size_bytes": 336749,
+      "pages": 5
+    },
+    {
+      "file": "13720_NT276B283340355CB4606A0E114A0985D9349.PDF",
+      "sha256": "19cc63b83b623fc4c230eba152ef67f483e513b8e03f454259eee0aa3ee2f6d9",
+      "size_bytes": 335149,
+      "pages": 5
+    },
+    {
+      "file": "13721_NT277F3970CD9E76046B0870FB310FEAC22D9.PDF",
+      "sha256": "533f864ae2c0d8aac2dd2583a39512df4fddb514c0e82b2f8933a0d6f177e20c",
+      "size_bytes": 340007,
+      "pages": 5
+    },
+    {
+      "file": "13722_NT278A39F641BB3C5485194734D495C3B914E.PDF",
+      "sha256": "615fbce0c0e7c0f2ef160fab053ec0a68ddd2cde2bbd13c2ccefdb16b8332699",
+      "size_bytes": 334940,
+      "pages": 5
+    },
+    {
+      "file": "13723_473MDD1229693F0604B6D996B1DF75C81E466.PDF",
+      "sha256": "66f2b0e43929335cb73f5b2c7bb638bede21de007163dcaf2554871d8d2723bc",
+      "size_bytes": 269114,
+      "pages": 10
+    },
+    {
+      "file": "13724_NT2796737482352AE4E488C0ECB304A05CDE1.PDF",
+      "sha256": "c9aced88076509127300621e4e516d32270118810b9d3181eb7fbee90ee74c06",
+      "size_bytes": 285220,
+      "pages": 1
+    },
+    {
+      "file": "13725_NT2800AE75657FD144B8ABC111ECF504BCC06.PDF",
+      "sha256": "38200e5772e439cdbbe6850525cbea6e944e61ef38681f7d44de15972150cdb6",
+      "size_bytes": 399187,
+      "pages": 2
+    },
+    {
+      "file": "13726_NT28158529C66B538494B850E025B99189148.PDF",
+      "sha256": "c03fb02e2c7abe2638360098bf078cc36a3463e3afe47d6d80bdfda127f8078c",
+      "size_bytes": 332060,
+      "pages": 1
+    },
+    {
+      "file": "13727_NOTI282BE83CF8F7E464D97B1AA95699F9D721A.PDF",
+      "sha256": "cb72f81e540aa73e770c0dcc26b78a53081591bcf61793258fec0e3e41873953",
+      "size_bytes": 387342,
+      "pages": 1
+    },
+    {
+      "file": "13728_NT28307C186A1A5F84D47870911D72F069023.PDF",
+      "sha256": "6251cba1082b158bc8b608069d71842102a1ac5dbabb9ff50b0eda312fce572f",
+      "size_bytes": 229977,
+      "pages": 1
+    },
+    {
+      "file": "13729_474MD4DC544D5A93B4A8CA3ECBF1AD165EA13.PDF",
+      "sha256": "ee6c4616f878e7b59ec18cca3faea43eec979663b52b7638f324e0de51bd722d",
+      "size_bytes": 586684,
+      "pages": 29
+    },
+    {
+      "file": "13730_NT284AC54C453B1964A66A31FB16A60EC6880.PDF",
+      "sha256": "21833553595375b69e5cea025401d638071ae7df902b456bfd6243ea41aa6fbb",
+      "size_bytes": 935482,
+      "pages": 83
+    },
+    {
+      "file": "13731_NT285F1B1B8F939D2474485000725A49F259B.PDF",
+      "sha256": "87b0fb39e499be336d38d3b2b47dd9adbcd380a55aa255fe23e7a7c77dc4c155",
+      "size_bytes": 204319,
+      "pages": 1
+    },
+    {
+      "file": "13732_NT2868A1091DB85D94644B6D9959F166A25F4.PDF",
+      "sha256": "083cdead5051ca01d5ec68a854c0ff6e83c4e4736ba5043aa8a7acc6c6a773b3",
+      "size_bytes": 233338,
+      "pages": 2
+    },
+    {
+      "file": "13733_NT2878E15A34193CE4896B33D99E242813E2E.PDF",
+      "sha256": "d4216462f00f35850e342ff92a22af85c3729c202a009bb34949da58efe01d37",
+      "size_bytes": 231531,
+      "pages": 2
+    },
+    {
+      "file": "13734_NT288675CF1D589A0489A814C572C2C3C58EA.PDF",
+      "sha256": "6bf5220727bcd9bc350a67a1b7c26129d844129f7f26944335c4324b68859da5",
+      "size_bytes": 230548,
+      "pages": 2
+    },
+    {
+      "file": "13735_NT289FD5C6CE733C944BCA3C1590AAE0C4B78.PDF",
+      "sha256": "425c6b37a3513445d10ef928ee6cd4a372d73a3397016ec8ae6c89b0fd6b5904",
+      "size_bytes": 231310,
+      "pages": 2
+    },
+    {
+      "file": "13736_NT290D61DF2C36E9C4E04BF3619D3D462C893.PDF",
+      "sha256": "f8c37256c59f18a93ba7772c63cccfae8b1a61e3d854e003ee8bb5ff6d683bf7",
+      "size_bytes": 227834,
+      "pages": 1
+    },
+    {
+      "file": "13737_291NT8DE5483CA3F84609A0CA56720CD64103.PDF",
+      "sha256": "9970b32fe7b3b97e787a4cac0dbefddd67e5fd71d64033da5df46bc53dbb8538",
+      "size_bytes": 320300,
+      "pages": 2
+    },
+    {
+      "file": "13738_292NT63009643AFA847A48C9A73F31E26175F.PDF",
+      "sha256": "981e84946ff507db6bb12b9dc02202310f3fddb2f5780c5eeec46d9386aacaff",
+      "size_bytes": 293825,
+      "pages": 2
+    },
+    {
+      "file": "13739_NOTI293D62A07A6EF394B75BAB6BEBA6F159565.PDF",
+      "sha256": "01b1a3789a77f889f77899ec9694fc209ff70794eb7845b32a6648fe070ed723",
+      "size_bytes": 288886,
+      "pages": 2
+    },
+    {
+      "file": "13740_294NT8A37BD7CAFB1463E8FCD9E5CC9F4D45B.PDF",
+      "sha256": "683ae77117240a72fbbddeaba1eba360cbbade6b51930d7692fa4ec0113e1753",
+      "size_bytes": 268565,
+      "pages": 1
+    },
+    {
+      "file": "13741_NT29576C2A2CDED3247308333EE2DE9383863.PDF",
+      "sha256": "2951fe66750119362ca532261b07f448cc32b1e42daf4f5df4fcec5ca84d983f",
+      "size_bytes": 261401,
+      "pages": 1
+    },
+    {
+      "file": "13742_NOTI2964177D6F8B5FA4B0A917BA90749E2394E.PDF",
+      "sha256": "f861a5bf373bb6ad25dfd251ceda356cc3157d2f6a82bb726ce486501dbd598a",
+      "size_bytes": 279693,
+      "pages": 3
+    },
+    {
+      "file": "13743_297NTF24A93A6BC7943F2A35FACCE28E4ABC3.PDF",
+      "sha256": "fd6e1537c1a425746e4499eb9999bfad625f7e48c9c38726edf1d4ea6204af14",
+      "size_bytes": 580820,
+      "pages": 37
+    },
+    {
+      "file": "13744_NT298343573D91EA4465B8CFF54B27EC977D5.PDF",
+      "sha256": "7c5ad74aba9ebd627e391479016cdad59b63f3ed588f9aff18969a76b4be9025",
+      "size_bytes": 251053,
+      "pages": 10
+    },
+    {
+      "file": "13745_NT298AC9CBAC4415B41D5B6CE45FF58A5AB54.PDF",
+      "sha256": "b99b9e1db38d300d3fd7999bd93a59c493fe3feddc1ad20a14df2027866cbfd7",
+      "size_bytes": 294659,
+      "pages": 4
+    },
+    {
+      "file": "13746_NOT300F305FBB8AB71472391BE6B9C2D74EB35.PDF",
+      "sha256": "6507f32084d7325769ebf9ef44a07ba20bd1240295add75c369377128d0cdc45",
+      "size_bytes": 401037,
+      "pages": 2
+    },
+    {
+      "file": "13747_NT3013F135D4783BE47B18D037114D5923B44.PDF",
+      "sha256": "fd7f7e2f2e1549baabc017e23305c75ed562546b27ff1074fef48768ddef96bb",
+      "size_bytes": 292342,
+      "pages": 3
+    },
+    {
+      "file": "13748_NT302E49744F98EB44A8EACBC0B6D70E470B8.PDF",
+      "sha256": "7a5bdca3ee310284d4c6c7f42e6780531448202a7769621799b6011c7e2d1cc9",
+      "size_bytes": 268908,
+      "pages": 3
+    },
+    {
+      "file": "13749_NT30314AC275308034E98A5E239A91CEAA5A7.PDF",
+      "sha256": "b5a09afad97ac669b4980368122ba7a23ffa4a5a8c508eb555ea42e7f5ee9c89",
+      "size_bytes": 261458,
+      "pages": 4
+    },
+    {
+      "file": "13750_FEMA23RA03112026F5D7706996DD3493DAD9E0899C64D4793.PDF",
+      "sha256": "c0142ea27380475c05ffb3ad9fff10cbd383e70803f971c1e99c6188504bcefd",
+      "size_bytes": 135548,
+      "pages": 1
+    },
+    {
+      "file": "13751_475MDA65A2A40240B4510BB6301A33C9ECBFE.PDF",
+      "sha256": "f15f856a93e0d2a9f7c2d7f0b85487a0a4e8c4d49fe99fb29186ec29ff1038a2",
+      "size_bytes": 383325,
+      "pages": 32
+    },
+    {
+      "file": "13752_476MDDC5A297B05094F8096910FE97E1AD34D.PDF",
+      "sha256": "deab70e199919f3db6fecabbccb9bf75cdf54a46a5d93ae700648badf48bbd13",
+      "size_bytes": 193806,
+      "pages": 5
+    },
+    {
+      "file": "13753_NT3043637FDEB03CF4D13A0F337D17BF78F0B.PDF",
+      "sha256": "71c4edd49692576454cf89b92b80b0769459efde633742ddc7b5e26912376360",
+      "size_bytes": 403545,
+      "pages": 2
+    },
+    {
+      "file": "13754_NT30511C215AE336743B58993F87C02ECC002.PDF",
+      "sha256": "062e4699fcbcb066269a07c8bafde28ac1249775be8c92a7aa9097df4cabc65d",
+      "size_bytes": 418699,
+      "pages": 2
+    },
+    {
+      "file": "13755_NT3067514ABFAA5774374811512162FA39EB4.PDF",
+      "sha256": "08528f0d9e8fd3dfc9c586f598e4f8f05260e46d0a18f31da176e4e5fc54aa23",
+      "size_bytes": 408241,
+      "pages": 2
+    },
+    {
+      "file": "13756_NT307C0BF88BB07734852972E54F8B576AAC7.PDF",
+      "sha256": "92c6253bbad8f6fd09c0b308ca9043880ca43e1c584b290f985557eca95fca49",
+      "size_bytes": 426560,
+      "pages": 2
+    }
+  ]
+}

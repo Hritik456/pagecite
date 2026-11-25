@@ -2,7 +2,7 @@
 
 PageCite answers questions from piles of PDF and DOCX files (policies, circulars, manuals) and **cites the page** each answer comes from. It is built as an async RAG platform. Files are uploaded straight to S3. Staged workers then parse, chunk, embed and index them. Answers use hybrid retrieval with citations and are checked by an eval harness.
 
-> Status: **P1 (upload pipeline)**, **P2 (staged workers → Redis vector + text index)**, **P3 (retries, DLQ, replay, cancel, chaos-tested)** and **P4 (hybrid retrieval with cited, streamed answers)** are done. Eval/deploy (P5) is next. The full design is in [docs/specs.md](docs/specs.md), and the decisions are in [docs/adr/](docs/adr/).
+> Status: **P1 (upload pipeline)**, **P2 (staged workers → Redis vector + text index)**, **P3 (retries, DLQ, replay, cancel, chaos-tested)**, **P4 (hybrid retrieval with cited, streamed answers)** and **P5 Part A (eval harness, 200-document load test, CI)** are done: hybrid + rerank lifts hit@5 from 76.2% to 90.5% on real RBI circulars, and ingestion runs at 25.2 documents/min ([docs/results.md](docs/results.md)). Deploy (P5 Part B) is next. The full design is in [docs/specs.md](docs/specs.md), and the decisions are in [docs/adr/](docs/adr/).
 
 ## Problem
 
@@ -173,6 +173,50 @@ ask_done request_id=c348… calls=4 prompt_tokens=6303 completion_tokens=124 ms=
 
 The strategy and decomposition are settings (`RETRIEVAL_STRATEGY=vector_only|hybrid|hybrid_rerank`, `RETRIEVAL_DECOMPOSE`), so P5 can compare configurations without touching the route.
 
+## Evaluation (P5)
+
+The harness runs a fixed golden set through each retrieval config, in-process on exactly the `/ask` path (`retrieve()` → `answer_events()`), and stores one row per config in `eval_runs`. Full numbers, method and environment: [docs/results.md](docs/results.md).
+
+| Config | hit@5 | MRR | Faithfulness | Abstention acc. | Avg tokens | Avg latency |
+|---|---|---|---|---|---|---|
+| `vector_only` | 76.2% | 0.663 | 84.8% | 91.5% | 2,326 | 1.8 s |
+| `hybrid` | 85.7% | 0.740 | 93.0% | 89.4% | 2,349 | 1.8 s |
+| **`hybrid_rerank`** (best) | **90.5%** | 0.800 | 83.7% | 95.7% | 6,303 | 3.0 s |
+| `hybrid_rerank_decomp` | 88.1% | 0.818 | 90.2% | 95.7% | 6,247 | 4.4 s |
+
+**Hybrid + rerank raised hit@5 from 76.2% (vector-only) to 90.5%.** The gain is concentrated where the spec predicted: on the near-duplicate "twin" circulars (the same KYC, capital-adequacy, securitisation and shareholding amendment issued once per bank type), vector-only finds the right twin for 37.5% of circular-number questions and 57.1% of bank-type questions; hybrid + rerank for 75.0% and 100%. On paraphrased semantic questions vector-only is already at 95.5%.
+
+- **Corpus:** 60 real RBI notification PDFs (395 pages), pinned by sha256 in [eval/corpus.json](eval/corpus.json). The PDFs are not committed: `corpus/download-rbi-pdfs.ps1` fetches them, and `python -m eval.build_corpus --check` verifies the folder (one downloaded file is an HTML error page; anything not starting with `%PDF` is excluded).
+- **Golden set:** [eval/golden.jsonl](eval/golden.jsonl), 47 rows: 22 paraphrased semantic, 8 that only the exact circular number disambiguates, 7 that only the bank type disambiguates, 5 multi-part (they trigger decomposition), 5 unanswerable. [eval/golden_review.md](eval/golden_review.md) shows each row's source sentence; `python -m eval.make_review` checks every quote is on its stated page (parsed with the pipeline's parser) and scores **lexical overlap** (share of the question's BM25 terms found in the quote, flag > 0.6) so the set doesn't flatter BM25. Mean overlap per kind is 0.11–0.21.
+- **Metrics:** hit@5 and MRR (a block hits if it is the expected document and its page range contains the expected page); faithfulness by an LLM judge per answer sentence against the block(s) it cites (uncited = unsupported); abstention accuracy; tokens and latency per question. An errored row counts as a miss everywhere, never dropped.
+- **Judge:** deterministic sentence splitting, one strict-JSON call per answer (`{"verdicts":[{"i","supported"}]}`), blocks and claims fenced as untrusted data. It must agree with 8 hand-labelled cases first (`--judge-check`), two of which try prompt injection (one in a document, one in the answer). It agreed on 8/8.
+- **Cost control:** `--estimate` counts tokens on the real retrieved blocks and prices them before anything is spent ($0.89 estimated; $0.52 actual for 4 configs × 47 rows, judge included); `--max-cost-usd` (default 2.0) is a hard cap; a pre-flight checks the eval tenant (every corpus file INDEXED once, MySQL chunks = Redis) before any paid call. `--rebuild <stamp>` re-scores a run from its saved details without model calls.
+
+```sh
+uv run python -m eval.ingest_corpus                       # tenant eval-rbi: upload the 60 PDFs, wait, verify
+uv run python -m eval.make_review                         # golden set -> eval/golden_review.md (quotes verified)
+uv run python -m eval.run --judge-check                   # judge vs 8 hand-labelled cases
+uv run python -m eval.run --config configs/vector_only.yaml --config configs/hybrid.yaml \
+  --config configs/hybrid_rerank.yaml --config configs/hybrid_rerank_decomp.yaml --estimate   # then without --estimate, + --write-results
+```
+
+Configs are strict YAML (`configs/*.yaml`): every key is required, because `RetrievalConfig.decompose` defaults to true and a forgotten key would silently measure a different strategy. Per-row details (answers, blocks with chunk ids, verdicts) go to `eval/out/` (gitignored); the console shows ids and numbers only.
+
+## Load test (P5)
+
+`python -m load.run_load` uploads **200 documents in one batch** (the 60 corpus PDFs repeated; there is no dedupe, so each copy is fully processed) into a fresh `load-200-<timestamp>` tenant, through Caddy and presigned PUTs with 8 client threads, and samples every 0.5 s: queue depth per stage on the broker (`LLEN` of the queue and its priority sub-queues), kombu's `unacked` hash, the outbox backlog, document statuses, and `GET /api/health` latency. Progress is read from MySQL, not the API, so a slow API can't stop the run. Stage timings come from `document_stages` (MySQL timestamps, one clock).
+
+| | |
+|---|---|
+| Throughput | **25.2 documents/min** (200/200 INDEXED in 476 s, 1,278 pages, 3,765 chunks), 0 failed, 0 retried |
+| Run time p95 per stage | parse 12.1 s · chunk 0.6 s · embed 4.3 s · index 1.2 s |
+| Peak queue depth | parse 173 · chunk 1 · embed 7 · index 4 |
+| Environment | Docker Desktop, 4 CPUs / 4.8 GiB, `-c 2` per stage queue |
+
+Parsing is the bottleneck. The first run also found a real bug: a **502 on `complete`** after 67 uploads, because Caddy reused an upstream connection that gunicorn (default keep-alive 2 s) was closing, and a POST is not retried. Caddy now closes idle upstream connections after 30 s and gunicorn keeps them for 75 s; `tests/unit/test_proxy_keepalive.py` keeps that order.
+
+Cleanup is a **local-only CLI**, not an API endpoint: `flask --app apps.api purge-tenant --tenant <id> --yes` deletes one tenant's Redis keys (`chunk:{id}:*`, which can't match tenant `{id}N`), S3 objects and MySQL rows (MySQL last, so a failed step is fixed by rerunning). It refuses `APP_ENV=production` before opening any connection, refuses without `--yes`, refuses while any of the tenant's documents is in flight, and keeps the tenant itself.
+
 ## Failure handling (P3)
 
 How each failure in [docs/specs.md](docs/specs.md) §8 is handled:
@@ -287,11 +331,32 @@ Requirements: Docker (Compose v2), Node 20+, and [uv](https://docs.astral.sh/uv/
    docker compose up -d
    ```
 
+8. Eval and load test (P5). The RBI corpus is not committed; download it first (Windows PowerShell):
+
+   ```sh
+   cd corpus && powershell -ExecutionPolicy Bypass -File .\download-rbi-pdfs.ps1 && cd ..
+   uv run python -m eval.build_corpus --check                # the folder matches eval/corpus.json
+   uv run python -m eval.ingest_corpus                       # tenant eval-rbi (about 3 min, ~$0.01)
+   uv run python -m eval.run --judge-check
+   uv run python -m eval.run --config configs/hybrid_rerank.yaml --estimate     # see "Evaluation (P5)"
+   uv run python -m load.run_load --estimate && uv run python -m load.run_load --write-results
+   docker compose exec api flask --app apps.api purge-tenant --tenant <load tenant id> --yes
+   ```
+
 For UI development, run `npm --prefix apps/web run dev` (port 5174). It proxies `/api` to Caddy.
 
 Notes:
 - MinIO no longer publishes community Docker images, so Compose uses Chainguard's from-source MinIO build (`cgr.dev/chainguard/minio`), pinned by digest.
 - The API reaches MinIO at `http://minio:9000`. Presigned URLs are signed for `S3_PUBLIC_ENDPOINT_URL` (the host the browser uses), because the host is part of the signature.
+
+## CI
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push and pull request (no deploy workflow yet; that is P5 Part B):
+
+- **test:** a `mysql:8.4` service, Flyway (`flyway/flyway:11`, the same image and `db/migrations` as Compose) migrating `pagecite_test`, then `uv sync --frozen` and `uv run pytest -q` (unit + DB tests; the MinIO/Redis integration tests stay local, and the real-Tesseract test skips). CI has no `.env`, so the job sets `TEST_DATABASE_URL` plus the two required settings the Celery app reads at import (`DATABASE_URL`, `S3_BUCKET`); nothing connects with them.
+- **web:** Node 22, `npm ci && npm run build` in `apps/web` (type check + Vite build).
+
+The workflow was checked locally first by running `pytest -q` in a clean copy of the repo without `.env`, which is how the missing import-time settings were found.
 
 ## Testing
 
@@ -326,7 +391,12 @@ P4 adds:
   - a missing index gives 503
   - the presigned GET serves the PDF inline
 
-The Done-when runs on real queues, acks, OCR and OpenAI are `scripts/smoke_ingest.py` (P2) and `scripts/smoke_ask.py` (P4); see Run locally.
+P5 adds:
+- **unit:** eval config loader (every key required), hit@5 / MRR / recall@5 / abstention / faithfulness aggregation (errors count as misses), lexical overlap, judge sentence splitting, citation mapping, verdict alignment and prompt fencing, cost and the budget cap (dated model snapshots priced like their base model, unknown models refused), the golden set's schema and coverage (every twin family targeted, multi rows trigger decomposition), the proxy/gunicorn keep-alive order
+- **DB:** `eval_runs` with the V4 columns; `purge-tenant` (only the target tenant, cascades, in-flight refusal, production refusal, `--yes`, idempotent rerun)
+- **integration:** the eval runner end to end on `samples/` (FakeEmbedder + FakeLLM on the real index): metrics and the `eval_runs` row, a failed answer is an error row, misaligned judge output, the budget cap; the tenant key pattern on real Redis
+
+The Done-when runs on real queues, acks, OCR and OpenAI are `scripts/smoke_ingest.py` (P2), `scripts/smoke_ask.py` (P4), `python -m eval.run` and `python -m load.run_load` (P5); see Run locally.
 
 - DB tests run against a separate database, **`pagecite_test`**. It is created on MySQL's first start by `db/init/01-test-db.sh` and migrated by the `flyway-test` service with the same Flyway migrations as production. There is no SQLite: V1 is MySQL DDL, and later phases rely on `ON DUPLICATE KEY UPDATE` and `SKIP LOCKED`. Tables are emptied before each test.
 - Integration tests use their own bucket and empty it before each test.
