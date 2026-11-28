@@ -130,7 +130,7 @@ jobs:
       SHA: ${{ needs.gate.outputs.sha }}
       INSTANCE: ${{ vars.EC2_INSTANCE_ID }}
     steps:
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@v6.3.1
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: pagecite-deploy-${{ github.run_id }}
