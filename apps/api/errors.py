@@ -12,16 +12,17 @@ log = logging.getLogger(__name__)
 class AppError(Exception):
     """An expected failure with a stable machine-readable code. Has no Flask dependency."""
 
-    def __init__(self, code: str, message: str, status: int = 400):
+    def __init__(self, code: str, message: str, status: int = 400, headers: dict[str, str] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.headers = headers or {}  # e.g. Retry-After on 429
 
 
-def error_response(code: str, message: str, status: int):
+def error_response(code: str, message: str, status: int, headers: dict[str, str] | None = None):
     body = {"error": {"code": code, "message": message, "request_id": g.get("request_id")}}
-    return jsonify(body), status
+    return jsonify(body), status, headers or {}
 
 
 def _validation_message(exc: ValidationError) -> str:
@@ -36,7 +37,7 @@ def _validation_message(exc: ValidationError) -> str:
 def register_error_handlers(app: Flask) -> None:
     @app.errorhandler(AppError)
     def _app_error(exc: AppError):
-        return error_response(exc.code, exc.message, exc.status)
+        return error_response(exc.code, exc.message, exc.status, exc.headers)
 
     @app.errorhandler(ValidationError)
     def _validation_error(exc: ValidationError):

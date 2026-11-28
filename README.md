@@ -351,12 +351,81 @@ Notes:
 
 ## CI
 
-[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push and pull request (no deploy workflow yet; that is P5 Part B):
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs on every push and pull request. On `main`, a green run triggers the deploy (see Deploy). The actions are on their Node 24 majors.
 
 - **test:** a `mysql:8.4` service, Flyway (`flyway/flyway:11`, the same image and `db/migrations` as Compose) migrating `pagecite_test`, then `uv sync --frozen` and `uv run pytest -q` (unit + DB tests; the MinIO/Redis integration tests stay local, and the real-Tesseract test skips). CI has no `.env`, so the job sets `TEST_DATABASE_URL` plus the two required settings the Celery app reads at import (`DATABASE_URL`, `S3_BUCKET`); nothing connects with them.
-- **web:** Node 22, `npm ci && npm run build` in `apps/web` (type check + Vite build).
+- **web:** Node 22, `npm ci && npm run build` in `apps/web` (type check + Vite build), then a check that the bundle contains no `pc_`/`pca_` key.
+- **deploy config:** `docker-compose.prod.yml` renders, the Caddyfile validates for dev (`:80`) and prod (HTTPS site), and ShellCheck passes on `deploy/*.sh`.
 
 The workflow was checked locally first by running `pytest -q` in a clean copy of the repo without `.env`, which is how the missing import-time settings were found.
+
+## Deploy (P5B)
+
+Production is one **t3.small** (2 GB RAM + 2 GB swap) in **ap-south-1**, with real **S3** instead of MinIO, at `https://pagecite.duckdns.org` (Caddy + Let's Encrypt; moving to a real domain is one env var, `SITE_ADDRESS`). Setup checklist: [docs/deploy/aws-setup.md](docs/deploy/aws-setup.md). Operations: [docs/runbook.md](docs/runbook.md).
+
+```mermaid
+flowchart LR
+  U[visitor browser] -->|HTTPS| C
+  subgraph EC2["EC2 t3.small, ap-south-1 (docker-compose.prod.yml)"]
+    C[Caddy
+TLS, web app, /config.json] --> A[API
+gunicorn 1x8]
+    A --> M[(MySQL 8.4
+128 MB pool)]
+    A --> R[(Redis 8.4
+index / broker / limits)]
+    RL[relay] --> R
+    W[worker
+parse+chunk+embed+index, -c 1] --> M & R
+  end
+  U -->|presigned PUT/GET| S3[(S3 bucket
+private, SSE-S3)]
+  A & W -->|instance role, tenant/*| S3
+  A & W --> O[OpenAI]
+  GH[GitHub Actions] -->|images :sha| GHCR[(GHCR)]
+  GH -->|OIDC role -> SSM Run Command| EC2
+  EC2 -->|pull| GHCR
+  EC2 -->|daily mysqldump| S3
+```
+
+- **Pipeline:**
+  - A push to `main` → CI (pytest on MySQL + Flyway, web build, deploy-config checks) → [deploy.yml](.github/workflows/deploy.yml).
+  - deploy.yml builds `pagecite-{api,worker,caddy,migrate}:<sha>` and has **SSM Run Command** run [deploy/deploy.sh](deploy/deploy.sh) *at that commit*. The script runs Flyway migrate before the API restarts, and `/health` must report the new sha.
+  - Then a smoke test over HTTPS.
+  - Rollback: redeploy an older sha (migrations are forward-only and additive).
+- **No standing access:**
+  - Port 22 is closed, with no SSH keys in GitHub and no AWS keys anywhere.
+  - GitHub OIDC assumes a role that can only send `AWS-RunShellScript` to this instance. The trust is pinned to `main`, and the deploy job runs only for a green CI **push** run of this repository, never for a fork PR.
+  - S3 access is the instance role (IMDSv2, hop limit 2), limited to `tenant/*` and `backups/*`.
+- **Fits 2 GB:**
+  - Per-service `mem_limit` (2,044 MiB in total for the six long-running services; about 0.62 GB in use at idle, measured).
+  - One Celery worker for all four queues (`-c 1`, recycled per 50 tasks or 400 MB).
+  - MySQL with a 128 MB buffer pool and `performance_schema` off.
+  - Redis `maxmemory 128mb noeviction`, with room for its AOF-rewrite fork.
+  - gunicorn with 1 worker.
+- **Public demo safety** ([ADR 0005](docs/adr/0005-public-demo-limits.md)):
+  - The browser uses an **ask-only key**: 403 on upload, complete, replay and cancel; deny by default.
+  - **10 asks/min and 20/day per IP** → 429 with `Retry-After`.
+  - A hard **$0.50/day OpenAI spend cap**: reserve the worst case before calling, settle to the actual cost afterwards → "demo limit reached".
+  - Questions of at most 500 characters.
+  - Every limit fails closed.
+- **Ops:**
+  - every service `restart: unless-stopped`
+  - json-file logs capped at 10 MB × 3
+  - 2 GB swap
+  - a daily `mysqldump` to `s3://…/backups/`, kept 7 days by a lifecycle rule
+  - everything returns after `sudo reboot`
+
+**Monthly cost** (ap-south-1, on-demand, running 24/7):
+
+| Item | USD/month |
+|---|---|
+| t3.small (about $0.0224/h) | about 16.4 |
+| 20 GB gp3 | about 1.8 |
+| Elastic IP / public IPv4 ($0.005/h, also while stopped) | 3.6 |
+| S3 (< 100 MB) + data transfer (< 100 GB free) | < 0.1 |
+| **AWS total** | **≈ 22** ($100 credits ≈ 4.5 months; stopping it at night roughly halves the instance part) |
+| OpenAI | hard cap $0.50/day, so at most $15; realistically cents |
 
 ## Testing
 
@@ -390,6 +459,25 @@ P4 adds:
   - a mid-stream timeout gives an `error` event
   - a missing index gives 503
   - the presigned GET serves the PDF inline
+
+P5B adds:
+- **unit:**
+  - demo limits: IP bucketing (IPv6 /64), window math, fail-closed in under 5 s when Redis is unreachable, and the start-up refusal for unpriced models
+  - prod S3: presigned PUT/GET host is `<bucket>.s3.ap-south-1.amazonaws.com`, SigV4, and the signed headers; the CORS file equals the presign headers
+  - `docker-compose.prod.yml` (memory budget, restart, log rotation, only Caddy publishes ports, secrets only for api/relay/worker)
+  - the deploy workflow's security gate
+  - no FLUSHDB outside the reindex check
+- **DB:**
+  - ask-only keys: 403 on every mutating route (enumerated from the URL map), reads + `/ask` allowed, tenant scoping, revocation
+  - question length
+  - `/health` reports the build sha
+- **integration (real Redis):**
+  - the 11th ask in a minute is 429 with `Retry-After`; a spoofed X-Forwarded-For hop doesn't help
+  - the daily window
+  - concurrent reservations never overshoot the cap
+  - settle vs keep the reservation
+  - a very low cap gives "demo limit reached" through the API
+  - an unpriced call keeps the reservation and never breaks the stream
 
 P5 adds:
 - **unit:** eval config loader (every key required), hit@5 / MRR / recall@5 / abstention / faithfulness aggregation (errors count as misses), lexical overlap, judge sentence splitting, citation mapping, verdict alignment and prompt fencing, cost and the budget cap (dated model snapshots priced like their base model, unknown models refused), the golden set's schema and coverage (every twin family targeted, multi rows trigger decomposition), the proxy/gunicorn keep-alive order

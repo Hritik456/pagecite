@@ -22,6 +22,7 @@ class AppState:
     sessions: sessionmaker[Session]
     storage: Storage
     retrieval: Any = None  # RetrievalDeps, built on first /ask (or injected by tests)
+    limits: Any = None  # apps.api.limits.Limits when any demo limit is configured (P5B), else None
     _retrieval_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
 
@@ -61,6 +62,7 @@ def build_retrieval(state: "AppState"):
 class TenantContext:
     id: int
     limits: TenantLimits
+    scope: str = "full"  # full (tenants.api_key_hash) | ask (api_keys, read + POST /ask only)
 
 
 def app_state() -> AppState:
@@ -82,6 +84,10 @@ def close_session(_exc: BaseException | None = None) -> None:
 
 def get_storage() -> Storage:
     return app_state().storage
+
+
+def get_limits():
+    return app_state().limits
 
 
 def current_tenant() -> TenantContext:

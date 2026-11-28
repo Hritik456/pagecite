@@ -30,7 +30,7 @@ TEST_INDEX_NAME = "idx:test_chunks"
 TEST_INDEX_PREFIX = "test:chunk:"
 TABLES = [
     "outbox_events", "eval_runs", "dead_letters", "processed_jobs", "chunks", "document_pages",
-    "document_stages", "documents", "batches", "tenants",
+    "document_stages", "documents", "batches", "api_keys", "tenants",
 ]
 
 

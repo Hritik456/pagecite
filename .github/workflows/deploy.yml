@@ -1,0 +1,183 @@
+# Deploy (P5B): build the images of one commit, push them to GHCR, and deploy them on the EC2 host
+# through SSM Run Command. No SSH and no long-lived AWS keys: GitHub OIDC assumes a role that may only
+# send AWS-RunShellScript to that one instance. Port 22 is never opened.
+#
+#   - automatically: after a green CI run of a push to main
+#   - rollback / redeploy: Actions -> Deploy -> Run workflow, sha=<an older commit on main>
+#     (its images already exist, so nothing is rebuilt). Flyway migrations only go forward:
+#     see docs/runbook.md, "Roll back".
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full 40-character commit SHA on main to deploy (rollback: an older one)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false  # never stop a deploy halfway
+
+env:
+  REGISTRY: ghcr.io/hritik456
+  SITE: https://pagecite.duckdns.org
+
+jobs:
+  gate:
+    name: what to deploy
+    # workflow_run: ONLY a successful CI run of a *push* to this repository's own main. head_branch alone
+    # is not enough: a fork PR from a branch named "main" also has head_branch == 'main', and the jobs
+    # below hold packages:write and the AWS role. Dispatch: only from main (the OIDC trust is pinned to it).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      build: ${{ steps.pick.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          if [ "$EVENT" = workflow_run ]; then sha="$RUN_SHA"; else sha="$INPUT_SHA"; fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a full 40-character sha: $sha"; exit 1; }
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
+          build=true
+          if [ "$EVENT" = workflow_dispatch ]; then
+            build=false
+            for image in api worker caddy migrate; do
+              docker manifest inspect "$REGISTRY/pagecite-$image:$sha" >/dev/null 2>&1 || build=true
+            done
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "deploying $sha (build images: $build)"
+
+  build:
+    name: image ${{ matrix.image }}
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: api
+            file: apps/api/Dockerfile
+          - image: worker
+            file: apps/worker/Dockerfile
+          - image: caddy
+            file: deploy/caddy/Dockerfile
+          - image: migrate
+            file: deploy/flyway/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}  # the commit CI tested, never the default-branch head
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ env.REGISTRY }}/pagecite-${{ matrix.image }}:${{ needs.gate.outputs.sha }}
+          build-args: GIT_SHA=${{ needs.gate.outputs.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    name: deploy to EC2 (SSM)
+    needs: [gate, build]
+    # build is skipped on a rollback whose images exist; deploy still runs then.
+    if: always() && needs.gate.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    # No `environment:` on purpose: it would change the OIDC subject to ...:environment:<name>, and the
+    # role's trust policy is pinned to repo:Hritik456/pagecite:ref:refs/heads/main.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC -> the AWS deploy role
+    env:
+      SHA: ${{ needs.gate.outputs.sha }}
+      INSTANCE: ${{ vars.EC2_INSTANCE_ID }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: pagecite-deploy-${{ github.run_id }}
+          aws-region: ap-south-1
+
+      - name: Run deploy/deploy.sh at this commit on the instance
+        run: |
+          set -euo pipefail
+          # The script is fetched pinned to the commit being deployed (never from /opt/pagecite), so a change
+          # to it ships with the deploy. SSM runs these lines with /bin/sh (dash): set -e, no pipefail.
+          url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${SHA}/deploy/deploy.sh"
+          script="/tmp/pagecite-deploy-${SHA}.sh"
+          params="$(jq -nc --arg url "$url" --arg script "$script" --arg sha "$SHA" \
+            '{commands: ["set -e", "curl -fsSL --retry 3 \($url) -o \($script)", "bash \($script) \($sha)"],
+              executionTimeout: ["1200"]}')"
+          cmd="$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript \
+            --comment "pagecite deploy ${SHA:0:12}" --parameters "$params" \
+            --query Command.CommandId --output text)"
+          echo "SSM command $cmd"
+          status=Pending
+          for _ in $(seq 1 180); do  # up to 15 min
+            sleep 5
+            status="$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$INSTANCE" \
+              --query Status --output text 2>/dev/null || echo Pending)"
+            case "$status" in Success|Failed|Cancelled|TimedOut|Undeliverable|Terminated) break ;; esac
+          done
+          aws ssm get-command-invocation --command-id "$cmd" --instance-id "$INSTANCE" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text || true
+          [ "$status" = Success ] || { echo "::error::deploy on the instance ended with status $status"; exit 1; }
+
+      - name: Smoke test over HTTPS
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 24); do  # up to ~2 min for the new API to answer through Caddy
+            got="$(curl -fsS --max-time 10 "$SITE/api/health" | jq -r .sha || true)"
+            [ "$got" = "$SHA" ] && break
+            echo "health sha=${got:-none}, waiting"; sleep 5
+          done
+          [ "$got" = "$SHA" ] || { echo "::error::/api/health reports $got, expected $SHA"; exit 1; }
+          curl -fsS --max-time 10 "$SITE/" | grep -q 'id="root"' || { echo "::error::home page did not load"; exit 1; }
+          key="$(curl -fsS --max-time 10 "$SITE/config.json" | jq -r .demoKey)"
+          if [ -n "$key" ]; then
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST "$SITE/api/batches" \
+              -H "X-Tenant-Key: $key" -H 'Content-Type: application/json' -d '{"files":[]}')"
+            [ "$code" = 403 ] || { echo "::error::the demo key got HTTP $code on POST /batches, expected 403"; exit 1; }
+            echo "demo key: 403 on upload, as required"
+          else
+            echo "::warning::DEMO_ASK_KEY is not set on the server yet: the site shows the full console"
+          fi
+          echo "deployed $SHA, healthy over HTTPS"

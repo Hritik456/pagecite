@@ -39,6 +39,36 @@ def register_cli(app: Flask) -> None:
         click.echo(f"api_key={key}")
         click.echo("Store the key now: only its SHA-256 hash is saved.")
 
+    @app.cli.command("create-ask-key")
+    @click.option("--tenant", "tenant_id", type=int, required=True)
+    def create_ask_key_cmd(tenant_id: int) -> None:
+        """Create an ask-only key (read + POST /ask) for a tenant and print it once."""
+        from .auth import hash_key, new_ask_key
+        from .models import ApiKey, Tenant
+
+        with app_state().sessions() as session, session.begin():
+            if session.get(Tenant, tenant_id) is None:
+                raise click.ClickException(f"tenant {tenant_id} does not exist")
+            key = new_ask_key()
+            session.add(ApiKey(tenant_id=tenant_id, key_hash=hash_key(key), scope="ask"))
+        click.echo(f"ask_key={key}")
+        click.echo("Ask-only: it can read and POST /ask, nothing else. Only its SHA-256 hash is saved.")
+
+    @app.cli.command("revoke-ask-keys")
+    @click.option("--tenant", "tenant_id", type=int, required=True)
+    def revoke_ask_keys_cmd(tenant_id: int) -> None:
+        """Revoke every active ask-only key of a tenant (they become unknown keys: 401)."""
+        from sqlalchemy import func, update
+
+        from .models import ApiKey
+
+        with app_state().sessions() as session, session.begin():
+            n = session.execute(
+                update(ApiKey).where(ApiKey.tenant_id == tenant_id, ApiKey.revoked_at.is_(None))
+                .values(revoked_at=func.now(6))
+            ).rowcount
+        click.echo(f"revoked={n}")
+
     @app.cli.command("purge-tenant")
     @click.option("--tenant", "tenant_id", type=int, required=True, help="The tenant whose documents to delete.")
     @click.option("--yes", is_flag=True, help="Confirm: delete this tenant's documents, chunks, index keys and objects.")

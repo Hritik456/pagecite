@@ -18,11 +18,17 @@ COPY apps ./apps
 RUN uv sync --frozen --no-dev --no-editable
 
 RUN useradd --system --no-create-home app
+
+# Build identity, shown by /health (the deploy smoke test checks it equals the deployed commit).
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+ENV WEB_CONCURRENCY=2
 USER app
 
 EXPOSE 8000
-# gthread: a streaming /ask holds one thread, not a whole worker process (2 workers x 8 threads).
+# gthread: a streaming /ask holds one thread, not a whole worker process (WEB_CONCURRENCY workers x
+# 8 threads; gunicorn reads WEB_CONCURRENCY: 2 in dev, 1 on the 2 GB prod host).
 # --timeout is the worker heartbeat; each upstream call has its own timeout (answer 60 s, JSON 20 s).
 # --keep-alive 75 must stay above Caddy's upstream keepalive (30 s, Caddyfile): the proxy closes idle
 # connections first, so it never sends a request on one gunicorn is closing (reset -> 502).
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--keep-alive", "75", "apps.api:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--keep-alive", "75", "apps.api:create_app()"]

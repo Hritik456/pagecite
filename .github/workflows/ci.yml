@@ -1,5 +1,5 @@
-# CI (P5 Part A): unit + DB tests against MySQL 8.4 with the Flyway migrations, and the web build.
-# No deploy here: the deploy workflow is P5 Part B.
+# CI: unit + DB tests against MySQL 8.4 with the Flyway migrations, the web build, and the deploy config.
+# On main, a green run triggers .github/workflows/deploy.yml (P5B).
 name: CI
 
 on:
@@ -35,11 +35,11 @@ jobs:
       # Read by tests/conftest.py (TestEnv). Tests build their own Settings from it.
       TEST_DATABASE_URL: mysql+pymysql://pagecite:pagecite-ci@127.0.0.1:3306/pagecite_test
       # Required Settings fields: the Celery app builds Settings() at import, which locally comes
-      # from .env. CI has no .env; nothing connects to these during pytest -q.
+      # from .env. CI has no .env; nothing connects with these during pytest -q.
       DATABASE_URL: mysql+pymysql://pagecite:pagecite-ci@127.0.0.1:3306/pagecite_test
       S3_BUCKET: pagecite-ci-unused
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Flyway migrate (same image and migrations as docker-compose.yml)
         run: >-
@@ -51,7 +51,7 @@ jobs:
           -locations=filesystem:/flyway/migrations -connectRetries=30
           migrate
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
 
@@ -71,11 +71,41 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
       - run: npm run build
+      - name: No PageCite key in the bundle (the demo key is served at runtime from /config.json)
+        run: |
+          if grep -rEn 'pca?_[A-Za-z0-9_-]{20,}' dist; then
+            echo "::error::a pc_/pca_ key is in the web bundle"; exit 1
+          fi
+
+  deploy-config:
+    name: deploy config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker-compose.prod.yml renders
+        run: |
+          printf '%s\n' SITE_ADDRESS=pagecite.duckdns.org MYSQL_DATABASE=pagecite MYSQL_USER=pagecite \
+            MYSQL_PASSWORD=x MYSQL_ROOT_PASSWORD=y > /tmp/ci.env
+          cp /tmp/ci.env .env  # env_file: .env (the real one only exists on the server)
+          IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file /tmp/ci.env --profile migrate config -q
+          rm .env
+      - name: Caddyfile is valid for dev (:80) and prod (HTTPS site)
+        run: |
+          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
+          docker run --rm -e SITE_ADDRESS=pagecite.duckdns.org -e DEMO_ASK_KEY=pca_example \
+            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
+      - name: ShellCheck the server scripts
+        # The shellcheck image has no shell to expand a glob: list the files from here.
+        run: |
+          files=()
+          for f in deploy/*.sh; do files+=("/mnt/${f#deploy/}"); done
+          docker run --rm -v "$PWD/deploy:/mnt:ro" koalaman/shellcheck:stable -S warning "${files[@]}"
