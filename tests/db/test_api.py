@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import text
 
 from apps.api.auth import hash_key
+from tests.conftest import make_test_app
 from tests.fakes import FakeStorage
 from tests.helpers import DOCX_MIME, auth, file_spec, pdf_bytes
 
@@ -36,7 +37,13 @@ def assert_envelope(resp, status: int, code: str):
 
 
 def test_health_needs_no_key(client):
-    assert client.get("/health").get_json() == {"status": "ok"}
+    assert client.get("/health").get_json() == {"status": "ok", "sha": "dev"}
+
+
+def test_health_reports_the_build_sha(test_env, fake_storage):
+    app = make_test_app(test_env, fake_storage, git_sha="25decd146181764b228351849781c5f6a8ea3f79")
+    assert app.test_client().get("/health").get_json()["sha"] == "25decd146181764b228351849781c5f6a8ea3f79"
+    app.extensions["pagecite"].engine.dispose()
 
 
 def test_missing_key_is_401(client):

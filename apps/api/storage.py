@@ -36,11 +36,20 @@ def _unavailable(exc: Exception) -> AppError:
     return err
 
 
+def regional_endpoint(region: str) -> str:
+    """AWS S3's regional endpoint. Presigning against the global one (s3.amazonaws.com) makes S3 answer
+    the browser's PUT/GET outside us-east-1 with a 307 redirect, which a presigned request can't follow."""
+    return f"https://s3.{region}.amazonaws.com"
+
+
 class S3Storage:
+    """MinIO in dev (S3_ENDPOINT_URL + path style); AWS in prod: no endpoint setting, virtual-hosted style,
+    the regional endpoint of AWS_REGION, SigV4, and credentials from the instance role (no keys set)."""
+
     def __init__(self, settings: Settings, bucket: str | None = None):
         cfg = Config(
             signature_version="s3v4",
-            s3={"addressing_style": "path"},
+            s3={"addressing_style": settings.s3_addressing_style},
             # Only send checksums we ask for; botocore's default CRC32 would be signed into the URL.
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
@@ -54,8 +63,9 @@ class S3Storage:
         }
         self.bucket = bucket or settings.s3_bucket
         self._expires = settings.presign_expires_seconds
-        self._client = boto3.client("s3", endpoint_url=settings.s3_endpoint_url, **common)
-        public = settings.s3_public_endpoint_url or settings.s3_endpoint_url
+        internal = settings.s3_endpoint_url or regional_endpoint(settings.aws_region)
+        self._client = boto3.client("s3", endpoint_url=internal, **common)
+        public = settings.s3_public_endpoint_url or internal
         self._presigner = boto3.client("s3", endpoint_url=public, **common)
 
     def presign_put(self, key: str, content_type: str, checksum_sha256_b64: str) -> str:

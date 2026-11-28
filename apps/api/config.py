@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     presign_expires_seconds: int = 900
+    # path for MinIO (dev); virtual for AWS, with the regional endpoint for aws_region (storage.py).
+    s3_addressing_style: str = "path"
 
     # Redis: DB 0 holds the search index, DB 1 is the Celery broker.
     redis_url: str = "redis://localhost:6379/0"
@@ -87,6 +89,18 @@ class Settings(BaseSettings):
     # snapshot the answers use (OPENAI_CHAT_MODEL in .env), so re-runs judge with the same model.
     eval_judge_model: str = "gpt-5.4-mini-2026-03-17"
 
+    # Public demo limits (P5B, apps/api/limits.py). Off unless set, so dev and tests are unchanged.
+    # They live in their own Redis DB, apart from the index (DB 0) and the broker (DB 1).
+    limits_redis_url: str = "redis://localhost:6379/2"
+    ask_rate_per_minute: int | None = None  # per client IP; prod 10
+    ask_rate_per_day: int | None = None  # per client IP, UTC day; prod 20
+    daily_spend_cap_usd: float | None = None  # global OpenAI spend of /ask per UTC day; prod 0.50
+    spend_reserve_usd: float = 0.01  # reserved before each /ask (worst case), settled to the actual cost
+    ask_max_chars: int = 500
+
+    # Build identity: baked into the image (Dockerfile ARG), shown by /health.
+    git_sha: str = "dev"
+
     @model_validator(mode="after")
     def _check_timing(self) -> "Settings":
         chain = [
@@ -103,6 +117,23 @@ class Settings(BaseSettings):
                 f"RETRY_BACKOFF_MAX_S ({self.retry_backoff_max_s}) must be < BROKER_VISIBILITY_TIMEOUT_S "
                 f"({self.broker_visibility_timeout_s}): a longer retry countdown is redelivered while still held"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _priced_models_when_capped(self) -> "Settings":
+        """A spend cap can only be enforced for models with a known price: refuse to start otherwise."""
+        if self.daily_spend_cap_usd is not None:
+            from .retrieval.pricing import UnknownModelPrice, price_for
+
+            for model in (self.openai_chat_model, self.openai_fast_model, self.openai_embed_model):
+                try:
+                    price_for(model)
+                except UnknownModelPrice as exc:
+                    raise ValueError(f"DAILY_SPEND_CAP_USD is set but {exc}") from None
+            if self.spend_reserve_usd <= 0 or self.spend_reserve_usd > self.daily_spend_cap_usd:
+                raise ValueError("SPEND_RESERVE_USD must be > 0 and <= DAILY_SPEND_CAP_USD")
+        if self.s3_addressing_style not in ("path", "virtual"):
+            raise ValueError("S3_ADDRESSING_STYLE must be path or virtual")
         return self
 
     @model_validator(mode="after")

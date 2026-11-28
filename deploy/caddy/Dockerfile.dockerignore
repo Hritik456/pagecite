@@ -1,0 +1,7 @@
+# Used instead of the repo's .dockerignore for deploy/caddy/Dockerfile (BuildKit): only the web app
+# sources and the Caddyfile go into this build context.
+**
+!Caddyfile
+!apps/web/**
+apps/web/node_modules
+apps/web/dist

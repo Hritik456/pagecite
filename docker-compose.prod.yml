@@ -1,0 +1,196 @@
+# Production (P5B): one t3.small (2 GB RAM + 2 GB swap), real S3, images from GHCR at one commit.
+# Standalone: docker-compose.yml (dev, with MinIO and the test DB) is not used here.
+#
+#   /opt/pagecite/pc <compose args>      wrapper written by deploy/deploy.sh (env files + this file)
+#
+# Values come from /opt/pagecite/.env (written by you, chmod 600; see deploy/env.prod.example) and
+# /opt/pagecite/deployed.env (IMAGE_TAG=<sha>, written by deploy.sh). Each service gets only the
+# variables it needs: caddy and mysql never see the OpenAI key.
+#
+# Memory budget (docs/deploy/aws-setup.md): the six long-running limits sum to 2,044 MiB on purpose
+# (measured idle total ~0.62 GB; flyway's 320 MiB only during a deploy);
+# with mem_limit only, Docker also lets each container use as much swap as its limit before the OOM killer.
+name: pagecite
+
+x-defaults: &defaults
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-app-env: &app-env
+  APP_ENV: production
+  DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+  REDIS_URL: redis://redis:6379/0  # search index (derived from MySQL)
+  CELERY_BROKER_URL: redis://redis:6379/1
+  LIMITS_REDIS_URL: redis://redis:6379/2  # demo limits; never FLUSHDB it (drops every FT index)
+  S3_ADDRESSING_STYLE: virtual  # + the ap-south-1 regional endpoint (no S3_ENDPOINT_URL in prod)
+
+services:
+  caddy:
+    <<: *defaults
+    image: ghcr.io/hritik456/pagecite-caddy:${IMAGE_TAG:?set by deploy.sh}
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+      DEMO_ASK_KEY: ${DEMO_ASK_KEY:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data  # certificates: kept across restarts and reboots (Let's Encrypt rate limits)
+      - caddy-config:/config
+    mem_limit: 96m
+    depends_on:
+      - api
+
+  api:
+    <<: *defaults
+    image: ghcr.io/hritik456/pagecite-api:${IMAGE_TAG:?set by deploy.sh}
+    env_file: .env
+    environment:
+      <<: *app-env
+      WEB_CONCURRENCY: "1"  # 1 gunicorn worker x 8 threads on the 2 GB host
+    expose:
+      - "8000"
+    mem_limit: 288m  # measured idle 134 MiB
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  relay:
+    <<: *defaults
+    image: ghcr.io/hritik456/pagecite-worker:${IMAGE_TAG:?set by deploy.sh}
+    env_file: .env
+    environment:
+      <<: *app-env
+    command: ["python", "-m", "apps.worker.relay"]
+    mem_limit: 224m  # measured idle 137 MiB: it imports the whole Celery app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *defaults
+    image: ghcr.io/hritik456/pagecite-worker:${IMAGE_TAG:?set by deploy.sh}
+    env_file: .env
+    environment:
+      <<: *app-env
+    # One worker for all four stage queues (2 GB host). -c 1: one task at a time (a big PDF's parse
+    # peaks ~0.5 GB); a child is replaced after 50 tasks or when it passes 400 MB (checked between tasks).
+    command:
+      - celery
+      - -A
+      - apps.worker.celery_app
+      - worker
+      - -Q
+      - parse,chunk,embed,index
+      - -c
+      - "1"
+      - --max-tasks-per-child
+      - "50"
+      - --max-memory-per-child
+      - "400000"
+      - -n
+      - worker@%h
+      - --loglevel
+      - INFO
+    mem_limit: 700m
+    # Warm shutdown lets a running task finish; a killed one is redelivered after the visibility timeout.
+    stop_grace_period: 120s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mysql:
+    <<: *defaults
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?}
+      MYSQL_USER: ${MYSQL_USER:?}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+    # Tuned small: the data is ~20 MB (chunks + embeddings), so a 128 MB buffer pool holds all of it.
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --max-connections=40
+      - --innodb-log-buffer-size=8M
+      - --tmp-table-size=16M
+      - --max-heap-table-size=16M
+      - --table-open-cache=256
+      - --skip-name-resolve
+    volumes:
+      - mysql-data:/var/lib/mysql
+    mem_limit: 416m  # measured idle 170 MiB, before the 128 MB buffer pool fills
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  redis:
+    <<: *defaults
+    image: redis:8.4
+    # noeviction: when full, writes fail loudly instead of silently dropping broker messages, limit
+    # counters or index keys. AOF everysec keeps the broker queue across restarts; no RDB snapshots.
+    # mem_limit 320m leaves room for the AOF-rewrite fork (copy-on-write can nearly double usage).
+    command:
+      - redis-server
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - noeviction
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - ""
+    volumes:
+      - redis-data:/data
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Run by deploy.sh before the API restarts:  pc --profile migrate run --rm flyway
+  flyway:
+    <<: *defaults
+    restart: "no"
+    profiles: ["migrate"]
+    image: ghcr.io/hritik456/pagecite-migrate:${IMAGE_TAG:?set by deploy.sh}
+    environment:
+      JAVA_ARGS: -Xmx192m
+    command:
+      - -url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?allowPublicKeyRetrieval=true&useSSL=false
+      - -user=${MYSQL_USER}
+      - -password=${MYSQL_PASSWORD}
+      - -locations=filesystem:/flyway/migrations
+      - -connectRetries=30
+      - migrate
+    mem_limit: 320m
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

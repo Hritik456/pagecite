@@ -5,12 +5,14 @@ from typing import Any
 
 from flask import Flask, jsonify
 from sqlalchemy.orm import sessionmaker
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .auth import authenticate
 from .cli import register_cli
 from .config import Settings
 from .db import make_engine
 from .errors import register_error_handlers
+from .limits import build_limits
 from .request_log import configure_logging, register_request_hooks
 from .routes.ask import bp as ask_bp
 from .routes.batches import bp as batches_bp
@@ -30,12 +32,16 @@ def create_app(
     configure_logging(settings.log_level)
 
     app = Flask(__name__, static_folder=None)  # the web console is served by Caddy
+    # Only Caddy reaches the API (no published port): trust exactly one X-Forwarded-For hop, the one
+    # Caddy appends, so request.remote_addr is the client and a client-sent header can't spoof it.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
     engine = make_engine(settings.database_url)
     app.extensions[EXTENSION_KEY] = AppState(
         settings=settings,
         engine=engine,
         sessions=sessionmaker(engine, expire_on_commit=False),
         storage=storage or S3Storage(settings),
+        limits=build_limits(settings),  # no connection yet; None when no demo limit is configured
     )
     if retrieval is not None:
         state = app.extensions[EXTENSION_KEY]
@@ -48,7 +54,7 @@ def create_app(
 
     @app.get("/health", endpoint="health")
     def health():
-        return jsonify({"status": "ok"})
+        return jsonify({"status": "ok", "sha": settings.git_sha})
 
     app.register_blueprint(batches_bp)
     app.register_blueprint(documents_bp)

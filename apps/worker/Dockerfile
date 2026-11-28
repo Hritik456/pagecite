@@ -28,4 +28,7 @@ RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && chmod -
 RUN useradd --system --no-create-home app
 USER app
 
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+
 CMD ["celery", "-A", "apps.worker.celery_app", "worker", "--loglevel", "INFO"]

@@ -65,6 +65,19 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
 
 
+class ApiKey(Base):
+    """An extra, narrower key for a tenant (V5). scope 'ask': read + POST /ask only."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"))
+    key_hash: Mapped[str] = mapped_column(String(64))
+    scope: Mapped[str] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(server_default=FetchedValue())
+    revoked_at: Mapped[datetime | None]
+
+
 class Batch(Base):
     __tablename__ = "batches"
 

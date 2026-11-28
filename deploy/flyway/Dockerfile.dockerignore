@@ -1,0 +1,3 @@
+# Used instead of the repo's .dockerignore for deploy/flyway/Dockerfile: only the migrations.
+**
+!db/migrations/**
